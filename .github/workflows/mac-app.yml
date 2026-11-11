@@ -58,6 +58,7 @@ jobs:
           sleep 8
           pgrep -x ThirdTimer
           screencapture -x proof/1-working.png
+          ci/capture.sh working
           pkill -x ThirdTimer
           sleep 1
           cat proof/run1-working.log
@@ -77,6 +78,7 @@ jobs:
           sleep 8
           pgrep -x ThirdTimer
           screencapture -x proof/3-breaking.png
+          ci/capture.sh breaking
           pkill -x ThirdTimer
           sleep 1
           cat proof/run3-breaking.log
