@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" hidden>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/favicon.svg" />
+
+    <title>Third Timer</title>
+
+    <meta name="description" content="Work flexibly, break proportionally" />
+    <meta name="author" content="Nico Baier" />
+    <meta
+      name="keywords"
+      content="timer, productivity, work, break, flex, proportion"
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="googlebot" content="index, follow" />
+    <meta name="google" content="notranslate" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300..900;1,300..900&family=Fira+Code:wght@300..700&family=Recursive:wght@300..1000&display=swap"
+      rel="stylesheet"
+    >
+
+    <script type="module" src="https://cdn.skypack.dev/twind/shim"></script>
+    <script src="https://esm.town/v/std/catch"></script>
+    <script type="twind-config">
+    {
+            "theme": {
+               "fontFamily": {
+                  "sans": [ "Recursive", "Figtree", "Arial", "sans-serif"],
+                  "mono": [
+                     "Fira Code",
+                     "SF Mono",
+                     "Monaco",
+                     "Inconsolata",
+                     "Roboto Mono",
+                     "monospace"
+                  ]
+               }
+            }
+         }
+    </script>
+
+    <link rel="stylesheet" href="/src/frontend/style.css" />
+  </head>
+
+  <body class="min-h-screen font-sans bg-gray-50">
+    <div id="root"></div>
+    <script type="module" src="/src/frontend/index.tsx"></script>
+  </body>
+</html>
