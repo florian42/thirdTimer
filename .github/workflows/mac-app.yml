@@ -175,8 +175,24 @@ jobs:
             # Compress before committing: the raw recording is about 14 MB.
             sudo apt-get install -y -q ffmpeg >/dev/null
             ffmpeg -v error -y -i proof/walkthrough.mov -t 112 -r 30 -c:v libx264 -crf 26 \
-              -pix_fmt yuv420p -movflags +faststart -an mac/docs/walkthrough.mp4
-            cp proof/walkthrough.log mac/docs/walkthrough.log
+              -pix_fmt yuv420p -movflags +faststart -an /tmp/walkthrough-silent.mp4
+            # The screen recording has no sound, so lay the bell over it at the
+            # moments the app rang it (the BELL lines in its log). The window
+            # appears about 1.8 s into the recording.
+            inputs=""; filters=""; labels=""; n=0
+            while read -r _ strikes at; do
+              for k in $(seq 1 "$strikes"); do
+                n=$((n + 1))
+                ms=$(awk -v t="$at" -v k="$k" 'BEGIN { printf "%d", (t + 1.8 + (k - 1) * 2.5) * 1000 }')
+                inputs="$inputs -i mac/Resources/bell.m4a"
+                filters="$filters[$n]adelay=$ms[a$n];"
+                labels="$labels[a$n]"
+              done
+            done < <(grep "^BELL " proof/walkthrough.log)
+            ffmpeg -v error -y -i /tmp/walkthrough-silent.mp4 $inputs \
+              -filter_complex "${filters}${labels}amix=inputs=$n:normalize=0,apad[a]" \
+              -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 128k -shortest \
+              -movflags +faststart mac/docs/walkthrough.mp4
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

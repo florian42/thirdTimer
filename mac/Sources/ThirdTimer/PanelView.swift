@@ -207,11 +207,15 @@ struct PanelView: View {
                 }
                 HStack(spacing: Space.s) {
                     if !snap.partialBreakOptions.isEmpty {
-                        secondary("Or just")
+                        // "Not now" needs the room when a pause is suggested.
+                        if snap.suggestion == nil {
+                            secondary("Or just")
+                        }
                         ForEach(snap.partialBreakOptions, id: \.self) { seconds in
                             Button("\(Int(seconds / 60)) min") {
                                 startBreak { model.send(.startBreak(seconds: seconds)) }
                             }
+                            .fixedSize()
                         }
                     }
                     Spacer()
