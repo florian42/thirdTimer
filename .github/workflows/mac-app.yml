@@ -11,6 +11,10 @@ on:
         description: "Commit the screenshots from this run to mac/docs/screenshots"
         type: boolean
         default: false
+      walkthrough:
+        description: "Record the scripted walkthrough video and commit it to mac/docs"
+        type: boolean
+        default: false
       screenshots_dir:
         description: "Folder under mac/docs/screenshots to write them to"
         type: string
@@ -115,6 +119,20 @@ jobs:
           grep -q "past" proof/run4-alarm.log
           grep '"alarmFired" : true' proof/state.json
 
+      - name: Record the walkthrough video
+        if: github.event_name == 'workflow_dispatch' && inputs.walkthrough
+        working-directory: mac
+        run: |
+          set -x
+          export THIRDTIMER_STATE_FILE="$PWD/proof/walkthrough-state.json"
+          screencapture -v -V 100 -x proof/walkthrough.mov &
+          sleep 2
+          build/ThirdTimer.app/Contents/MacOS/ThirdTimer --walkthrough > proof/walkthrough.log 2>&1 &
+          sleep 101
+          pkill -x ThirdTimer || true
+          wait || true
+          ls -la proof/walkthrough.mov
+
       - name: Package the app
         working-directory: mac
         run: ditto -c -k --keepParent build/ThirdTimer.app proof/ThirdTimer.app.zip
@@ -127,9 +145,9 @@ jobs:
           path: mac/proof
 
   screenshots:
-    name: Commit screenshots
+    name: Commit screenshots and video
     needs: mac-build
-    if: github.event_name == 'workflow_dispatch' && inputs.commit_screenshots
+    if: github.event_name == 'workflow_dispatch' && (inputs.commit_screenshots || inputs.walkthrough)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -139,13 +157,18 @@ jobs:
         with:
           name: thirdtimer-mac
           path: proof
-      - name: Commit the screenshots
+      - name: Commit the media
         run: |
-          dir="mac/docs/screenshots/${{ inputs.screenshots_dir }}"
-          rm -rf "$dir" && mkdir -p "$dir"
-          cp proof/*-window.png proof/*-menubar.png proof/full-*.png proof/1-working.png "$dir/"
+          if [ "${{ inputs.commit_screenshots }}" = "true" ]; then
+            dir="mac/docs/screenshots/${{ inputs.screenshots_dir }}"
+            rm -rf "$dir" && mkdir -p "$dir"
+            cp proof/*-window.png proof/*-menubar.png proof/full-*.png proof/1-working.png "$dir/"
+          fi
+          if [ "${{ inputs.walkthrough }}" = "true" ]; then
+            cp proof/walkthrough.mov mac/docs/walkthrough.mov
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add mac/docs/screenshots
-          git commit -m "Add ${{ inputs.screenshots_dir }} screenshots of the Mac app from CI"
+          git add mac/docs
+          git commit -m "Add media of the Mac app from CI"
           git push

@@ -20,6 +20,9 @@ final class AppModel: ObservableObject {
     private let stateURL: URL
     private var ticker: Timer?
     private var alarmTimer: Timer?
+    private var alarmDate: Date?
+    /// Only the walkthrough moves this, to show hours of use in a minute.
+    private var clockOffset: TimeInterval = 0
 
     var snapshot: Snapshot { engine.snapshot(state, now: now) }
 
@@ -30,6 +33,10 @@ final class AppModel: ObservableObject {
         if let demo = AppModel.argument(after: "--demo") {
             seedDemo(demo)
         }
+        if CommandLine.arguments.contains("--walkthrough") {
+            state = EngineState()
+            save()
+        }
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
@@ -38,8 +45,21 @@ final class AppModel: ObservableObject {
         send(.launch)
     }
 
+    private func currentTime() -> Date {
+        Date().addingTimeInterval(clockOffset)
+    }
+
+    /// Moves the app's clock forward. Used by the walkthrough only.
+    func advanceClock(by seconds: TimeInterval) {
+        clockOffset += seconds
+        now = currentTime()
+        if let alarmDate, alarmDate <= now {
+            fireAlarm()
+        }
+    }
+
     private func tick() {
-        now = Date()
+        now = currentTime()
         // `--print-title` writes the menu bar text once a second, for checks.
         if CommandLine.arguments.contains("--print-title") {
             print(snapshot.menuTitle)
@@ -50,7 +70,7 @@ final class AppModel: ObservableObject {
     // MARK: Events
 
     func send(_ event: Event) {
-        let time = Date()
+        let time = currentTime()
         let (next, effects) = engine.reduce(state, event, now: time)
         state = next
         now = time
@@ -81,7 +101,9 @@ final class AppModel: ObservableObject {
         switch effect {
         case .scheduleAlarm(let date):
             alarmTimer?.invalidate()
-            let timer = Timer(fire: date, interval: 0, repeats: false) { [weak self] _ in
+            alarmDate = date
+            let fireAt = Date().addingTimeInterval(date.timeIntervalSince(currentTime()))
+            let timer = Timer(fire: fireAt, interval: 0, repeats: false) { [weak self] _ in
                 Task { @MainActor in self?.fireAlarm() }
             }
             RunLoop.main.add(timer, forMode: .common)
@@ -89,6 +111,7 @@ final class AppModel: ObservableObject {
         case .cancelAlarm:
             alarmTimer?.invalidate()
             alarmTimer = nil
+            alarmDate = nil
         case .askCheckpoint, .askHandoff, .showReturn:
             // The panel shows these from the snapshot.
             break
@@ -104,6 +127,9 @@ final class AppModel: ObservableObject {
     }
 
     private func fireAlarm() {
+        alarmTimer?.invalidate()
+        alarmTimer = nil
+        alarmDate = nil
         guard state.mode == .breaking else { return }
         NSSound(named: "Glass")?.play()
         if CommandLine.arguments.contains("--print-title") {

@@ -38,6 +38,7 @@ struct ThirdTimerApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var hotKey: HotKey?
     private var window: NSWindow?
+    private var walkthrough: Walkthrough?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu bar only: no Dock icon.
@@ -51,8 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         AppModel.shared.requestNotificationPermission()
 
         // `--window` also shows the panel in an ordinary window, for screenshots and checks.
-        if CommandLine.arguments.contains("--window") {
+        if CommandLine.arguments.contains("--window") || CommandLine.arguments.contains("--walkthrough") {
             showPanelWindow()
+        }
+        // `--walkthrough` plays a scripted day of use with captions, for recording.
+        if CommandLine.arguments.contains("--walkthrough") {
+            walkthrough = Walkthrough()
+            walkthrough?.start()
         }
     }
 

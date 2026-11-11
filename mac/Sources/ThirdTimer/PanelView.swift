@@ -48,6 +48,10 @@ struct PanelView: View {
         // A fixed size: a scroll view has no height of its own, so without
         // one the panel collapses to nothing.
         .frame(width: 360, height: 560)
+        // Keep the picker on the deliverable in use, also when the hotkey changed it.
+        .onChange(of: model.state.lastDeliverableID) { newValue in
+            selectedDeliverable = newValue
+        }
         .onAppear {
             selectedDeliverable = snap.currentDeliverableID ?? snap.preselectedDeliverableID
             // Don't open with the cursor in a text field: Return should trigger the main action.
