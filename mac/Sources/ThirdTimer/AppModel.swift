@@ -104,6 +104,10 @@ final class AppModel: ObservableObject {
     private func fireAlarm() {
         guard state.mode == .breaking else { return }
         NSSound(named: "Glass")?.play()
+        if CommandLine.arguments.contains("--print-title") {
+            print("ALARM: break time is up")
+            fflush(stdout)
+        }
         if AppModel.canNotify {
             let content = UNMutableNotificationContent()
             content.title = "Break time is up"
@@ -155,7 +159,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Demo state (for screenshots and checks: `--demo working` or `--demo breaking`)
+    // MARK: Demo state (for screenshots and checks: `--demo working`, `breaking` or `ending`)
 
     static func argument(after flag: String) -> String? {
         let args = CommandLine.arguments
@@ -179,6 +183,10 @@ final class AppModel: ObservableObject {
         apply(.recordCheckpoint("Intro done, section 2 half drafted"), 76 * 60)
         apply(.recordHandoff("Claude: check the figures in section 3"), 76 * 60)
         apply(.resumeWork(deliverableID: report), 90 * 60)
+        if kind == "ending" {
+            // A break whose time runs out four seconds after launch.
+            apply(.startBreak(seconds: 64), 3 * 3600 - 60)
+        }
         if kind == "breaking" {
             apply(.startBreak(seconds: nil), 3 * 3600 - 4 * 60)
             apply(.recordCheckpoint("Section 3 drafted, tables missing"), 3 * 3600 - 3 * 60)

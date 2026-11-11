@@ -51,6 +51,7 @@ swift test          # engine tests (needs Xcode, not only the Command Line Tools
 Flags for checking the app by hand or in CI:
 
 - `--window` also shows the panel in an ordinary window.
-- `--demo working` or `--demo breaking` starts from a sample session.
+- `--demo working`, `--demo breaking` or `--demo ending` starts from a sample
+  session. This replaces the saved state, so set `THIRDTIMER_STATE_FILE` too.
 - `--print-title` prints the menu bar text once a second.
 - `THIRDTIMER_STATE_FILE=/path/state.json` uses a different state file.

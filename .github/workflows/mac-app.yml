@@ -84,6 +84,17 @@ jobs:
           cat proof/run3-breaking.log
           grep -q "Break" proof/run3-breaking.log
 
+          # 4. A break that runs out: the alarm must fire once and be recorded.
+          "$BIN" --demo ending --print-title > proof/run4-alarm.log 2>&1 &
+          sleep 8
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run4-alarm.log
+          test "$(grep -c "ALARM" proof/run4-alarm.log)" = "1"
+          grep -q "left" proof/run4-alarm.log
+          grep -q "past" proof/run4-alarm.log
+          grep '"alarmFired" : true' proof/state.json
+
       - name: Package the app
         working-directory: mac
         run: ditto -c -k --keepParent build/ThirdTimer.app proof/ThirdTimer.app.zip
