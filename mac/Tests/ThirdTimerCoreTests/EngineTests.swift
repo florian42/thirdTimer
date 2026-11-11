@@ -616,4 +616,187 @@ struct EngineTests {
         #expect(near(v.bankSeconds, 15 * minute))
         #expect(!state.settings.handoffPrompt)
     }
+
+    // MARK: Break suggestions
+
+    @Test mutating func noSuggestionInTheFirstHour() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(9, 59))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(9, 59)).suggestion == nil)
+    }
+
+    @Test mutating func aPauseIsSuggestedAfterAnHourOfUnbrokenWork() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(10))
+        #expect(lastEffects.contains(.nudge(.pause)))
+        #expect(view(at: mon(10)).suggestion == .pause)
+    }
+
+    @Test mutating func theSuggestionIsMadeOnceThenRepeatedEveryHalfHour() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(10))
+        send(.tick, at: mon(10, 0, 1))
+        #expect(lastEffects == [])
+        send(.tick, at: mon(10, 29))
+        #expect(lastEffects == [])
+        send(.tick, at: mon(10, 30))
+        #expect(lastEffects.contains(.nudge(.pause)))
+    }
+
+    @Test mutating func afterALongGapOnlyOneSuggestionIsMade() {
+        send(.startWork(deliverableID: nil), at: mon(14, 10))
+        send(.tick, at: mon(18))
+        #expect(lastEffects.filter { $0 == .nudge(.pause) }.count == 1)
+        send(.tick, at: mon(18, 0, 1))
+        #expect(lastEffects == [])
+    }
+
+    @Test mutating func takingABreakStartsTheHourAgain() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(10))
+        send(.startBreak(seconds: nil), at: mon(10, 5))
+        send(.tick, at: mon(10, 10))
+        #expect(lastEffects == [])
+        send(.resumeWork(deliverableID: nil), at: mon(10, 20))
+        send(.tick, at: mon(11, 19))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(11, 19)).suggestion == nil)
+        send(.tick, at: mon(11, 20))
+        #expect(lastEffects.contains(.nudge(.pause)))
+    }
+
+    @Test mutating func notNowHidesTheSuggestionUntilTheNextOne() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(10))
+        send(.dismissSuggestion, at: mon(10, 1))
+        #expect(view(at: mon(10, 20)).suggestion == nil)
+        send(.tick, at: mon(10, 30))
+        #expect(view(at: mon(10, 30)).suggestion == .pause)
+    }
+
+    @Test mutating func suggestionsCanBeTurnedOff() {
+        var rhythm = Rhythm()
+        rhythm.nudgeEnabled = false
+        rhythm.lunchEnabled = false
+        send(.setRhythm(rhythm), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(12, 30))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(12, 30)).suggestion == nil)
+    }
+
+    @Test mutating func theIntervalCanBeChanged() {
+        var rhythm = Rhythm()
+        rhythm.firstNudgeMinutes = 45
+        send(.setRhythm(rhythm), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.tick, at: mon(9, 45))
+        #expect(lastEffects.contains(.nudge(.pause)))
+    }
+
+    @Test mutating func nothingIsSuggestedWhileIdleOrOnABreak() {
+        send(.tick, at: mon(12))
+        #expect(lastEffects == [])
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(9, 30))
+        send(.tick, at: mon(12))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(12)).suggestion == nil)
+    }
+
+    // MARK: Lunch
+
+    @Test mutating func lunchIsSuggestedAtNoonWhileWorking() {
+        send(.startWork(deliverableID: nil), at: mon(11, 30))
+        send(.tick, at: mon(11, 59))
+        #expect(lastEffects == [])
+        send(.tick, at: mon(12))
+        #expect(lastEffects == [.nudge(.lunch), .save])
+        #expect(view(at: mon(12)).suggestion == .lunch)
+        send(.tick, at: mon(12, 0, 1))
+        #expect(lastEffects == [])
+    }
+
+    @Test mutating func lunchTakesTheConfiguredLengthWhateverWasBanked() {
+        send(.startWork(deliverableID: nil), at: mon(11, 30))
+        send(.startLunch, at: mon(12))
+        let v = view(at: mon(12))
+        #expect(v.mode == .breaking)
+        #expect(v.isLunchBreak)
+        #expect(near(v.breakRemainingSeconds!, 60 * minute))
+        #expect(lastEffects.contains(.scheduleAlarm(at: mon(13))))
+    }
+
+    @Test mutating func theAfternoonStartsWithAnEmptyBank() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.startLunch, at: mon(12))
+        send(.resumeWork(deliverableID: nil), at: mon(12, 45))
+        #expect(view(at: mon(12, 45)).bankSeconds == 0)
+        #expect(view(at: mon(12, 45)).todayBreakSeconds == 45 * minute)
+    }
+
+    @Test mutating func lunchIsNotSuggestedAgainOnceTaken() {
+        send(.startWork(deliverableID: nil), at: mon(11))
+        send(.startLunch, at: mon(11, 50))
+        send(.resumeWork(deliverableID: nil), at: mon(12, 40))
+        send(.tick, at: mon(12, 41))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(12, 41)).suggestion == nil)
+    }
+
+    @Test mutating func lunchIsSuggestedAgainTheNextDay() {
+        send(.startWork(deliverableID: nil), at: mon(11))
+        send(.startLunch, at: mon(12))
+        send(.resumeWork(deliverableID: nil), at: mon(13))
+        send(.resetSession, at: mon(17))
+        send(.startWork(deliverableID: nil), at: mon(11, day: 10))
+        send(.tick, at: mon(12, day: 10))
+        #expect(lastEffects.contains(.nudge(.lunch)))
+    }
+
+    @Test mutating func notNowOnLunchHidesItForTheDay() {
+        send(.startWork(deliverableID: nil), at: mon(11, 30))
+        send(.tick, at: mon(12))
+        send(.dismissSuggestion, at: mon(12, 1))
+        #expect(view(at: mon(12, 10)).suggestion == nil)
+        // The ordinary pause suggestion still comes when its hour is up.
+        send(.tick, at: mon(12, 30))
+        #expect(lastEffects.contains(.nudge(.pause)))
+    }
+
+    @Test mutating func lunchIsNotSuggestedLateInTheAfternoon() {
+        send(.startWork(deliverableID: nil), at: mon(14, 30))
+        send(.tick, at: mon(14, 31))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(14, 31)).suggestion == nil)
+    }
+
+    @Test mutating func lunchtimeCanBeChanged() {
+        var rhythm = Rhythm()
+        rhythm.lunchMinuteOfDay = 13 * 60
+        rhythm.lunchLengthMinutes = 30
+        send(.setRhythm(rhythm), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(12, 30))
+        send(.tick, at: mon(12, 45))
+        #expect(lastEffects == [])
+        send(.tick, at: mon(13))
+        #expect(lastEffects.contains(.nudge(.lunch)))
+        send(.startLunch, at: mon(13))
+        #expect(near(view(at: mon(13)).breakRemainingSeconds!, 30 * minute))
+    }
+
+    @Test mutating func stateSavedBeforeSuggestionsExistedStillLoads() throws {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        var json = String(decoding: try Persistence.encode(state), as: UTF8.self)
+        // Drop the fields an earlier build never wrote.
+        state.savedRhythm = nil
+        state.savedNudgeLog = nil
+        json = String(decoding: try Persistence.encode(state), as: UTF8.self)
+        #expect(!json.contains("savedRhythm"))
+        state = try Persistence.decode(Data(json.utf8))
+        #expect(state.rhythm == Rhythm())
+        send(.tick, at: mon(10))
+        #expect(lastEffects.contains(.nudge(.pause)))
+    }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import os
 import ServiceManagement
@@ -21,14 +22,21 @@ final class AppModel: ObservableObject {
     private var ticker: Timer?
     private var alarmTimer: Timer?
     private var alarmDate: Date?
-    /// Only the walkthrough moves this, to show hours of use in a minute.
+    /// Only the walkthrough and the demos move this, to show a day in a minute.
     private var clockOffset: TimeInterval = 0
+    private let launchedAt = Date()
+    /// A suggestion waiting for a quiet moment, and the latest it may wait until.
+    private var pendingNudge: (nudge: Nudge, latest: Date)?
+    private var bellPlayers: [Int: AVAudioPlayer] = [:]
 
     var snapshot: Snapshot { engine.snapshot(state, now: now) }
 
     private init() {
         stateURL = AppModel.resolveStateURL()
         state = EngineState()
+        if let time = AppModel.argument(after: "--at") {
+            setClock(to: time)
+        }
         load()
         if let demo = AppModel.argument(after: "--demo") {
             seedDemo(demo)
@@ -56,10 +64,23 @@ final class AppModel: ObservableObject {
         if let alarmDate, alarmDate <= now {
             fireAlarm()
         }
+        send(.tick)
+        deliverNudgeWhenQuiet()
+    }
+
+    /// Sets the app's clock to a time of day today, such as "12:05". For demos.
+    func setClock(to time: String) {
+        let parts = time.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2,
+              let target = Calendar.current.date(bySettingHour: parts[0], minute: parts[1], second: 0, of: Date())
+        else { return }
+        clockOffset = target.timeIntervalSince(Date())
+        now = currentTime()
     }
 
     private func tick() {
-        now = currentTime()
+        send(.tick)
+        deliverNudgeWhenQuiet()
         // `--print-title` writes the menu bar text once a second, for checks.
         if CommandLine.arguments.contains("--print-title") {
             print(snapshot.menuTitle)
@@ -112,6 +133,10 @@ final class AppModel: ObservableObject {
             alarmTimer?.invalidate()
             alarmTimer = nil
             alarmDate = nil
+        case .nudge(let nudge):
+            // Hold it for a quiet moment, but not for long.
+            pendingNudge = (nudge, Date().addingTimeInterval(AppModel.longestNudgeWait))
+            deliverNudgeWhenQuiet()
         case .askCheckpoint, .askHandoff, .showReturn:
             // The panel shows these from the snapshot.
             break
@@ -126,24 +151,70 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Suggestions and the bell
+
+    /// A suggestion lands better at a natural pause than in the middle of a thought.
+    private static let quietSeconds = 15.0
+    private static let longestNudgeWait = 600.0
+
+    private func deliverNudgeWhenQuiet() {
+        guard let pending = pendingNudge else { return }
+        guard state.mode == .working, snapshot.suggestion != nil else {
+            pendingNudge = nil
+            return
+        }
+        let anyInput = CGEventType(rawValue: ~0)!
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
+        let scripted = CommandLine.arguments.contains("--walkthrough")
+        guard scripted || idle >= AppModel.quietSeconds || Date() >= pending.latest else { return }
+        pendingNudge = nil
+        ring(strikes: 1)
+        let snap = snapshot
+        switch pending.nudge {
+        case .pause:
+            notify(title: "A good moment to pause",
+                   body: "You've earned \(Format.short(snap.bankSeconds)) of break.")
+        case .lunch:
+            notify(title: "Lunchtime", body: "A proper lunch sets up the afternoon.")
+        }
+    }
+
+    /// Rings the soft bell. One strike suggests a break; two bring you back.
+    private func ring(strikes: Int) {
+        if CommandLine.arguments.contains("--print-title") || CommandLine.arguments.contains("--walkthrough") {
+            print(String(format: "BELL %d %.1f", strikes, Date().timeIntervalSince(launchedAt)))
+            fflush(stdout)
+        }
+        guard state.rhythm.bellEnabled else { return }
+        if bellPlayers[strikes] == nil {
+            bellPlayers[strikes] = try? AVAudioPlayer(data: Bell.wav(strikes: strikes))
+        }
+        guard let player = bellPlayers[strikes] else { return }
+        player.currentTime = 0
+        player.play()
+    }
+
+    private func notify(title: String, body: String) {
+        guard AppModel.canNotify else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
     private func fireAlarm() {
         alarmTimer?.invalidate()
         alarmTimer = nil
         alarmDate = nil
         guard state.mode == .breaking else { return }
-        NSSound(named: "Glass")?.play()
         if CommandLine.arguments.contains("--print-title") {
             print("ALARM: break time is up")
             fflush(stdout)
         }
-        if AppModel.canNotify {
-            let content = UNMutableNotificationContent()
-            content.title = "Break time is up"
-            content.body = "Your break has run its length."
-            content.sound = .default
-            let request = UNNotificationRequest(identifier: "break-end", content: content, trigger: nil)
-            UNUserNotificationCenter.current().add(request)
-        }
+        ring(strikes: 2)
+        notify(title: state.currentBreak?.isMeal == true ? "Lunch is over" : "Break time is up",
+               body: "Ready when you are.")
         send(.alarmFired)
     }
 
@@ -188,7 +259,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Demo state (for screenshots and checks: `--demo working`, `breaking` or `ending`)
+    // MARK: Demo state (for screenshots and checks)
 
     static func argument(after flag: String) -> String? {
         let args = CommandLine.arguments
@@ -208,7 +279,10 @@ final class AppModel: ObservableObject {
     }
 
     private func seedSample(_ s: inout EngineState, kind: String) {
-        let start = Date().addingTimeInterval(-3 * 3600)
+        // A first stint of 75 minutes, a 15-minute break, then the current stint:
+        // 40 minutes long, or 65 for the "nudge" demo so that a pause is suggested.
+        let total: TimeInterval = (kind == "nudge" ? 155 : 130) * 60
+        let start = currentTime().addingTimeInterval(-total)
         let report = UUID(), slides = UUID()
         func apply(_ event: Event, _ offset: TimeInterval) {
             s = engine.reduce(s, event, now: start.addingTimeInterval(offset)).0
@@ -220,13 +294,18 @@ final class AppModel: ObservableObject {
         apply(.recordCheckpoint("Intro done, section 2 half drafted"), 76 * 60)
         apply(.recordHandoff("Claude: check the figures in section 3"), 76 * 60)
         apply(.resumeWork(deliverableID: report), 90 * 60)
-        if kind == "ending" {
+        switch kind {
+        case "ending":
             // A break whose time runs out four seconds after launch.
-            apply(.startBreak(seconds: 64), 3 * 3600 - 60)
-        }
-        if kind == "breaking" {
-            apply(.startBreak(seconds: nil), 3 * 3600 - 4 * 60)
-            apply(.recordCheckpoint("Section 3 drafted, tables missing"), 3 * 3600 - 3 * 60)
+            apply(.startBreak(seconds: 64), total - 60)
+        case "breaking":
+            apply(.startBreak(seconds: nil), total - 4 * 60)
+            apply(.recordCheckpoint("Section 3 drafted, tables missing"), total - 3 * 60)
+        case "lunch":
+            apply(.startLunch, total - 5 * 60)
+        default:
+            // "working", "nudge" and "noon" differ only in the clock and the stint length.
+            break
         }
     }
 

@@ -67,7 +67,7 @@ jobs:
           BIN=build/ThirdTimer.app/Contents/MacOS/ThirdTimer
 
           # 1. Start with a seeded work stint and show the panel in a window.
-          "$BIN" --demo working --window --print-title > proof/run1-working.log 2>&1 &
+          "$BIN" --at 10:20 --demo working --window --print-title > proof/run1-working.log 2>&1 &
           sleep 8
           pgrep -x ThirdTimer
           screencapture -x proof/1-working.png
@@ -77,7 +77,7 @@ jobs:
           cat proof/run1-working.log
 
           # 2. Restart from the saved state file only: the stint must still be running.
-          "$BIN" --window --print-title > proof/run2-restarted.log 2>&1 &
+          "$BIN" --at 10:20 --window --print-title > proof/run2-restarted.log 2>&1 &
           sleep 8
           pgrep -x ThirdTimer
           screencapture -x proof/2-restarted.png
@@ -87,7 +87,7 @@ jobs:
           grep -q "Quarterly report" proof/run2-restarted.log
 
           # 3. A break in progress: the countdown must tick down.
-          "$BIN" --demo breaking --window --print-title > proof/run3-breaking.log 2>&1 &
+          "$BIN" --at 10:20 --demo breaking --window --print-title > proof/run3-breaking.log 2>&1 &
           sleep 8
           pgrep -x ThirdTimer
           screencapture -x proof/3-breaking.png
@@ -97,9 +97,12 @@ jobs:
           cat proof/run3-breaking.log
           grep -q "Break" proof/run3-breaking.log
 
-          # 3b. Worst-case data and the empty state, for screenshots.
-          for kind in worst idle; do
-            "$BIN" --demo "$kind" --window --print-title > "proof/run-$kind.log" 2>&1 &
+          # 3b. Other states, for screenshots: worst-case data, empty, a suggested
+          # pause, lunchtime, and a lunch break. The clock is set so that the
+          # result does not depend on when CI runs.
+          for demo in worst@10:20 idle@10:20 nudge@10:20 noon@12:05 lunch@12:05; do
+            kind="${demo%@*}"
+            "$BIN" --at "${demo#*@}" --demo "$kind" --window --print-title > "proof/run-$kind.log" 2>&1 &
             sleep 8
             pgrep -x ThirdTimer
             screencapture -x "proof/full-$kind.png"
@@ -107,9 +110,13 @@ jobs:
             pkill -x ThirdTimer
             sleep 1
           done
+          # The suggested pause must have rung the bell once.
+          cat proof/run-nudge.log | head -5
+          test "$(grep -c "^BELL 1 " proof/run-nudge.log)" = "1"
+          test "$(grep -c "^BELL 1 " proof/run-noon.log)" = "1"
 
           # 4. A break that runs out: the alarm must fire once and be recorded.
-          "$BIN" --demo ending --print-title > proof/run4-alarm.log 2>&1 &
+          "$BIN" --at 10:20 --demo ending --print-title > proof/run4-alarm.log 2>&1 &
           sleep 8
           pkill -x ThirdTimer
           sleep 1
@@ -125,10 +132,10 @@ jobs:
         run: |
           set -x
           export THIRDTIMER_STATE_FILE="$PWD/proof/walkthrough-state.json"
-          screencapture -v -V 100 -x proof/walkthrough.mov &
+          screencapture -v -V 118 -x proof/walkthrough.mov &
           sleep 2
           build/ThirdTimer.app/Contents/MacOS/ThirdTimer --walkthrough > proof/walkthrough.log 2>&1 &
-          sleep 101
+          sleep 119
           pkill -x ThirdTimer || true
           wait || true
           ls -la proof/walkthrough.mov
@@ -167,8 +174,9 @@ jobs:
           if [ "${{ inputs.walkthrough }}" = "true" ]; then
             # Compress before committing: the raw recording is about 14 MB.
             sudo apt-get install -y -q ffmpeg >/dev/null
-            ffmpeg -v error -y -i proof/walkthrough.mov -t 93 -r 30 -c:v libx264 -crf 26 \
+            ffmpeg -v error -y -i proof/walkthrough.mov -t 112 -r 30 -c:v libx264 -crf 26 \
               -pix_fmt yuv420p -movflags +faststart -an mac/docs/walkthrough.mp4
+            cp proof/walkthrough.log mac/docs/walkthrough.log
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

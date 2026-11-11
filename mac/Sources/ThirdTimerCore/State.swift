@@ -29,6 +29,9 @@ public struct BreakSession: Codable, Equatable, Sendable {
     public var checkpoint: String?
     public var handoff: String?
     public var alarmFired: Bool
+    /// True for a lunch break: it lasts as long as you choose and starts the
+    /// afternoon with an empty bank. Absent in state saved by earlier versions.
+    public var isMeal: Bool?
 }
 
 public struct WorkEntry: Codable, Equatable, Sendable {
@@ -57,6 +60,43 @@ public struct ReturnInfo: Codable, Equatable, Sendable {
         self.checkpoint = checkpoint
         self.handoff = handoff
     }
+}
+
+/// When the app suggests a break. Times of day are minutes after midnight.
+public struct Rhythm: Codable, Equatable, Sendable {
+    /// Suggest a break after this much unbroken work, and again at each repeat.
+    public var nudgeEnabled = true
+    public var firstNudgeMinutes = 60
+    public var repeatNudgeMinutes = 30
+    /// Suggest lunch at this time of day.
+    public var lunchEnabled = true
+    public var lunchMinuteOfDay = 12 * 60
+    public var lunchLengthMinutes = 60
+    /// Ring the bell with a suggestion and at the end of a break.
+    public var bellEnabled = true
+
+    public init() {}
+
+    /// How long after lunchtime a lunch suggestion still makes sense.
+    public static let lunchWindowMinutes = 120
+}
+
+/// What has already been suggested, so nothing is suggested twice.
+public struct NudgeLog: Codable, Equatable, Sendable {
+    public var nudgesThisStint = 0
+    public var lunchSuggestedOn: Date?
+    public var lunchTakenOn: Date?
+    /// "Not now": the pause suggestion stays hidden until the next one is due.
+    public var dismissedNudges = 0
+    public var lunchDismissedOn: Date?
+
+    public init() {}
+}
+
+/// A suggestion to take a break.
+public enum Nudge: Equatable, Sendable {
+    case pause
+    case lunch
 }
 
 public struct Settings: Codable, Equatable, Sendable {
@@ -88,8 +128,21 @@ public struct EngineState: Codable, Equatable, Sendable {
     public var checkpoints: [Checkpoint] = []
     public var settings = Settings()
     public var returnInfo: ReturnInfo?
+    /// Optional so that state saved before these existed still loads.
+    public var savedRhythm: Rhythm?
+    public var savedNudgeLog: NudgeLog?
 
     public init() {}
+
+    public var rhythm: Rhythm {
+        get { savedRhythm ?? Rhythm() }
+        set { savedRhythm = newValue }
+    }
+
+    public var nudgeLog: NudgeLog {
+        get { savedNudgeLog ?? NudgeLog() }
+        set { savedNudgeLog = newValue }
+    }
 
     public var ratio: Double { 1.0 / Double(ratioDenominator) }
 
@@ -114,8 +167,12 @@ public enum Event: Equatable, Sendable {
     /// The app has started; lets the engine re-arm a pending alarm.
     case launch
     case startWork(deliverableID: UUID?)
+    /// Time has passed. Lets the engine decide whether a break suggestion is due.
+    case tick
     /// `seconds` nil means take the whole bank.
     case startBreak(seconds: Double?)
+    /// A lunch break of the length set in the rhythm settings.
+    case startLunch
     case recordCheckpoint(String)
     case recordHandoff(String)
     case resumeWork(deliverableID: UUID?)
@@ -124,12 +181,16 @@ public enum Event: Equatable, Sendable {
     case addDeliverable(id: UUID, name: String)
     case renameDeliverable(id: UUID, name: String)
     case completeDeliverable(id: UUID)
+    /// "Not now" on the current suggestion.
+    case dismissSuggestion
+    case setRhythm(Rhythm)
     case setHandoffPrompt(Bool)
     case setLaunchAtLogin(Bool)
     case resetSession
 }
 
 public enum Effect: Equatable, Sendable {
+    case nudge(Nudge)
     case scheduleAlarm(at: Date)
     case cancelAlarm
     case askCheckpoint

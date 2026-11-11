@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import ThirdTimerCore
 
-/// A scripted day of use, for recording a demo video (`--walkthrough`).
+/// A scripted morning of use, for recording a demo video (`--walkthrough`).
 /// It sends the same events a person would cause with the hotkey and the
 /// panel, shows a caption for each step, and moves the clock forward quickly
 /// where a real session would take an hour.
@@ -20,47 +20,51 @@ final class Walkthrough: ObservableObject {
     private func run() async {
         let model = AppModel.shared
         let report = UUID()
-        await say("Third Timer lives in the menu bar. Start by adding what you are working on.", 4)
-        model.send(.addDeliverable(id: report, name: "Quarterly report"))
-        await say("It keeps track of the time you put into it.", 4)
+        model.setClock(to: "09:00")
 
+        await say("Nine o'clock. Third Timer lives in the menu bar. Add what you're working on.", 4)
+        model.send(.addDeliverable(id: report, name: "Quarterly report"))
+        await pause(2)
         await say("Start working.", 2, keys: "⌃⌥T")
         model.send(.startWork(deliverableID: report))
-        await pause(2)
+        await say("Work as long as you like. The ring fills toward a natural pause.", 3)
 
-        await say("Work for as long as you like. Every minute earns a third of a minute of break.", 2)
-        await fastForward(50 * 60, label: "50 minutes later")
+        await fastForward(60 * 60, label: "An hour later")
+        await say("After an hour of unbroken work, a soft bell suggests a pause. It waits for a lull in your typing, and you can say not now.", 6, keys: "🔔")
 
-        await say("Ready for a pause? You have earned 16 minutes.", 3, keys: "⌃⌥T")
+        await say("Take the break. You've earned 20 minutes.", 3, keys: "⌃⌥T")
         model.send(.startBreak(seconds: nil))
         await pause(2)
-
-        await say("Write one line on where you left off…", 3)
+        await say("Note where you left off…", 3)
         model.send(.recordCheckpoint("Intro done, section 2 half drafted"))
-        await say("…and hand something to Claude, so progress continues while you're away.", 3)
+        await say("…and hand something to Claude, if you like.", 3)
         model.send(.recordHandoff("Claude: check the figures in section 3"))
-        await say("You earned this break. Step away from the screen.", 3)
-        await fastForward(10 * 60, label: "10 minutes later")
+        await say("Then step away from the screen.", 2)
+        await fastForward(12 * 60, label: "12 minutes later")
 
-        await say("Back early? The unused break time stays banked, and your notes are waiting.", 3, keys: "⌃⌥T")
+        await say("Back early? The unused minutes stay banked, and your notes are waiting.", 4, keys: "⌃⌥T")
         model.send(.resumeWork(deliverableID: report))
-        await pause(4)
+        await pause(3)
 
-        await fastForward(75 * 60, label: "75 minutes of deep work later")
-        await say("Under pressure? Don't skip the break. Take just 3 minutes of it.", 4, keys: "3 min")
+        await fastForward(55 * 60, label: "55 minutes later")
+        await say("Under pressure? Don't skip the break. Take just three minutes of it.", 4, keys: "3 min")
         model.send(.startBreak(seconds: 180))
         await pause(2)
-        await fastForward(3 * 60 + 4, label: "3 minutes later")
-        await say("An alarm sounds when the time is up. The rest of your break is still banked.", 4)
+        await fastForward(3 * 60 + 2, label: "Three minutes later")
+        await say("Two soft strikes bring you back. The rest of the break is still yours.", 5, keys: "🔔 🔔")
         model.send(.resumeWork(deliverableID: report))
         await pause(2)
 
-        await say("Crunch time? Tighten the ratio. Breaks get shorter, but they still happen.", 3, keys: "1/5")
-        model.send(.setRatio(denominator: 5))
-        await pause(3)
-        await fastForward(60 * 60, label: "An hour later")
+        await fastForward(49 * 60 + 30, label: "Toward noon")
+        await say("At twelve it suggests lunch.", 5, keys: "🔔")
+        model.send(.startLunch)
+        await say("Lunch lasts as long as you set, whatever you had banked.", 4)
+        await fastForward(60 * 60 + 2, label: "An hour later")
+        await say("The bell rings, and the afternoon starts fresh.", 4, keys: "🔔 🔔")
+        model.send(.resumeWork(deliverableID: report))
+        await pause(2)
 
-        await say("That's the loop: work, break in proportion, keep what you don't use.", 6)
+        await say("That's the rhythm: work, pause when it's natural, come back rested.", 6)
         caption = ""
         keys = ""
     }
@@ -84,7 +88,7 @@ final class Walkthrough: ObservableObject {
             AppModel.shared.advanceClock(by: seconds / Double(steps))
             try? await Task.sleep(for: .milliseconds(50))
         }
-        await pause(1)
+        await pause(1.2)
     }
 
     private func showCaptionWindow() {

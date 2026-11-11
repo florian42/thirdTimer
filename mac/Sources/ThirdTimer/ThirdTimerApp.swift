@@ -17,20 +17,11 @@ struct ThirdTimerApp: App {
             // one width, so the item does not shift its neighbours every second.
             let snap = model.snapshot
             HStack(spacing: 4) {
-                Image(systemName: ThirdTimerApp.symbol(for: snap.mode))
+                Image(systemName: Mood.of(snap).symbol)
                 Text(snap.menuTitle).monospacedDigit()
             }
         }
         .menuBarExtraStyle(.window)
-    }
-
-    /// Each mode has its own shape, so the state never rests on colour alone.
-    private static func symbol(for mode: Mode) -> String {
-        switch mode {
-        case .idle: "pause.circle"
-        case .working: "timer"
-        case .breaking: "cup.and.saucer.fill"
-        }
     }
 }
 

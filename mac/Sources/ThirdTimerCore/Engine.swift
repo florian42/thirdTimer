@@ -29,15 +29,48 @@ public struct Engine: Sendable {
             }
             return (s, effects)
 
+        case .tick:
+            guard case .working(let stint) = s.session else { return (state, []) }
+            let rhythm = s.rhythm
+            var log = s.nudgeLog
+            let elapsed = now.timeIntervalSince(stint.start)
+            if lunchIsDue(s, now: now), log.lunchSuggestedOn != calendar.startOfDay(for: now) {
+                log.lunchSuggestedOn = calendar.startOfDay(for: now)
+                // Lunch replaces a pause suggestion that would fall at the same moment.
+                log.nudgesThisStint = max(log.nudgesThisStint, nudgesDue(rhythm, elapsed: elapsed))
+                effects.append(.nudge(.lunch))
+            } else if rhythm.nudgeEnabled {
+                let due = nudgesDue(rhythm, elapsed: elapsed)
+                if due > log.nudgesThisStint {
+                    // After a long gap (the Mac was asleep) only one suggestion is made.
+                    log.nudgesThisStint = due
+                    effects.append(.nudge(.pause))
+                }
+            }
+            s.nudgeLog = log
+
         case .startWork(let deliverableID):
             guard s.mode == .idle else { return (state, []) }
             beginStint(&s, deliverableID: deliverableID, handoff: nil, now: now, effects: &effects)
 
-        case .startBreak(let seconds):
+        case .startBreak, .startLunch:
             guard s.mode == .working, let stint = s.stint else { return (state, []) }
             s.bankSeconds += accrued(stint, ratio: s.ratio, now: now)
             s.workLog.append(WorkEntry(start: stint.start, end: now, deliverableID: stint.deliverableID))
-            let allowance = min(max(0, seconds ?? s.bankSeconds), s.bankSeconds)
+            let allowance: Double
+            let isMeal: Bool
+            switch event {
+            case .startBreak(let seconds):
+                allowance = min(max(0, seconds ?? s.bankSeconds), s.bankSeconds)
+                isMeal = false
+            default:
+                // Lunch lasts as long as you set, however much was banked.
+                allowance = Double(s.rhythm.lunchLengthMinutes) * 60
+                isMeal = true
+                var log = s.nudgeLog
+                log.lunchTakenOn = calendar.startOfDay(for: now)
+                s.nudgeLog = log
+            }
             s.returnInfo = nil
             s.session = .breaking(BreakSession(
                 start: now,
@@ -45,7 +78,8 @@ public struct Engine: Sendable {
                 deliverableID: stint.deliverableID,
                 checkpoint: nil,
                 handoff: nil,
-                alarmFired: false
+                alarmFired: false,
+                isMeal: isMeal
             ))
             effects.append(.scheduleAlarm(at: now.addingTimeInterval(allowance)))
             effects.append(.askCheckpoint)
@@ -75,7 +109,8 @@ public struct Engine: Sendable {
             guard s.mode == .breaking, let b = s.currentBreak else { return (state, []) }
             let taken = max(0, now.timeIntervalSince(b.start))
             // Debit card, not credit card: the bank never goes below zero.
-            s.bankSeconds = max(0, s.bankSeconds - taken)
+            // Lunch uses up what was banked, so the afternoon starts fresh.
+            s.bankSeconds = b.isMeal == true ? 0 : max(0, s.bankSeconds - taken)
             s.breakLog.append(BreakEntry(start: b.start, end: now))
             effects.append(.cancelAlarm)
             beginStint(&s, deliverableID: deliverableID, handoff: b.handoff, now: now, effects: &effects)
@@ -116,6 +151,24 @@ public struct Engine: Sendable {
             s.deliverables[index].isDone = true
             s.deliverables[index].completedAt = now
 
+        case .dismissSuggestion:
+            guard case .working(let stint) = s.session else { return (state, []) }
+            var log = s.nudgeLog
+            if lunchIsDue(s, now: now) {
+                log.lunchDismissedOn = calendar.startOfDay(for: now)
+            } else {
+                log.dismissedNudges = max(1, nudgesDue(s.rhythm, elapsed: now.timeIntervalSince(stint.start)))
+            }
+            s.nudgeLog = log
+
+        case .setRhythm(let rhythm):
+            var r = rhythm
+            r.firstNudgeMinutes = min(max(r.firstNudgeMinutes, 15), 180)
+            r.repeatNudgeMinutes = min(max(r.repeatNudgeMinutes, 10), 120)
+            r.lunchMinuteOfDay = min(max(r.lunchMinuteOfDay, 0), 24 * 60 - 1)
+            r.lunchLengthMinutes = min(max(r.lunchLengthMinutes, 15), 180)
+            s.rhythm = r
+
         case .setHandoffPrompt(let on):
             s.settings.handoffPrompt = on
 
@@ -150,6 +203,10 @@ public struct Engine: Sendable {
     ) {
         let id = deliverableID.flatMap { id in s.deliverables.contains(where: { $0.id == id }) ? id : nil }
         s.session = .working(Stint(start: now, deliverableID: id, earnedSeconds: 0, earnAnchor: now))
+        var log = s.nudgeLog
+        log.nudgesThisStint = 0
+        log.dismissedNudges = 0
+        s.nudgeLog = log
         if let id { s.lastDeliverableID = id }
         let lastCheckpoint = s.checkpoints.last(where: { $0.deliverableID == id })?.text
         if lastCheckpoint != nil || handoff != nil {
@@ -159,6 +216,24 @@ public struct Engine: Sendable {
         } else {
             s.returnInfo = nil
         }
+    }
+
+    /// How many pause suggestions should have been made after this much unbroken work.
+    private func nudgesDue(_ rhythm: Rhythm, elapsed: Double) -> Int {
+        let first = Double(rhythm.firstNudgeMinutes) * 60
+        guard elapsed >= first else { return 0 }
+        return 1 + Int((elapsed - first) / (Double(rhythm.repeatNudgeMinutes) * 60))
+    }
+
+    /// Lunch is suggested while working, from lunchtime for a while after, until lunch is taken.
+    private func lunchIsDue(_ state: EngineState, now: Date) -> Bool {
+        let rhythm = state.rhythm
+        guard rhythm.lunchEnabled, state.mode == .working else { return false }
+        let day = calendar.startOfDay(for: now)
+        guard state.nudgeLog.lunchTakenOn != day, state.nudgeLog.lunchDismissedOn != day else { return false }
+        let minutes = now.timeIntervalSince(day) / 60
+        let start = Double(rhythm.lunchMinuteOfDay)
+        return minutes >= start && minutes < start + Double(Rhythm.lunchWindowMinutes)
     }
 
     private func accrued(_ stint: Stint, ratio: Double, now: Date) -> Double {
@@ -247,6 +322,8 @@ public struct Engine: Sendable {
             awaitingCheckpoint: state.mode == .breaking && state.currentBreak?.checkpoint == nil,
             awaitingHandoff: state.mode == .breaking && state.settings.handoffPrompt
                 && state.currentBreak?.handoff == nil,
+            suggestion: suggestion(state, elapsed: elapsed, now: now),
+            isLunchBreak: state.currentBreak?.isMeal == true,
             partialBreakOptions: state.mode == .working
                 ? Engine.partialBreakLengths.filter { $0 < liveBank } : []
         )
@@ -257,6 +334,16 @@ public struct Engine: Sendable {
         guard let name else { return "Working" }
         guard name.count > Engine.menuNameLimit else { return name }
         return String(name.prefix(Engine.menuNameLimit - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// What the app would suggest right now, if anything.
+    private func suggestion(_ state: EngineState, elapsed: Double, now: Date) -> Nudge? {
+        guard state.mode == .working else { return nil }
+        if lunchIsDue(state, now: now) { return .lunch }
+        let rhythm = state.rhythm
+        let due = nudgesDue(rhythm, elapsed: elapsed)
+        if rhythm.nudgeEnabled, due > 0, due > state.nudgeLog.dismissedNudges { return .pause }
+        return nil
     }
 
     public static let partialBreakLengths: [Double] = [180, 300, 600]
@@ -332,6 +419,9 @@ public struct Snapshot: Equatable, Sendable {
     public var returnInfo: ReturnInfo?
     public var awaitingCheckpoint: Bool
     public var awaitingHandoff: Bool
+    /// Set while a break would be a good idea; the panel and menu bar show it calmly.
+    public var suggestion: Nudge?
+    public var isLunchBreak: Bool
     /// Partial break lengths, in seconds, that the bank can cover.
     public var partialBreakOptions: [Double]
 }
