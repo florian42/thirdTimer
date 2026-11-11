@@ -1,0 +1,94 @@
+name: Mac app
+
+on:
+  push:
+    paths:
+      - "mac/**"
+      - ".github/workflows/mac-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-tests-linux:
+    name: Engine tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.0-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the engine tests
+        working-directory: mac
+        run: swift test
+
+  mac-build:
+    name: Build and run on macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version && sw_vers
+
+      - name: Run the engine tests
+        working-directory: mac
+        run: swift test
+
+      - name: Build ThirdTimer.app
+        working-directory: mac
+        run: ./build-app.sh
+
+      - name: Check the app bundle
+        working-directory: mac
+        run: |
+          codesign --verify --verbose build/ThirdTimer.app
+          plutil -lint build/ThirdTimer.app/Contents/Info.plist
+          file build/ThirdTimer.app/Contents/MacOS/ThirdTimer
+
+      - name: Run the app mid-stint, then restart it
+        working-directory: mac
+        run: |
+          set -x
+          mkdir -p proof
+          export THIRDTIMER_STATE_FILE="$PWD/proof/state.json"
+          BIN=build/ThirdTimer.app/Contents/MacOS/ThirdTimer
+
+          # 1. Start with a seeded work stint and show the panel in a window.
+          "$BIN" --demo working --window --print-title > proof/run1-working.log 2>&1 &
+          sleep 8
+          pgrep -x ThirdTimer
+          screencapture -x proof/1-working.png
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run1-working.log
+
+          # 2. Restart from the saved state file only: the stint must still be running.
+          "$BIN" --window --print-title > proof/run2-restarted.log 2>&1 &
+          sleep 8
+          pgrep -x ThirdTimer
+          screencapture -x proof/2-restarted.png
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run2-restarted.log
+          grep -q "Quarterly report" proof/run2-restarted.log
+
+          # 3. A break in progress: the countdown must tick down.
+          "$BIN" --demo breaking --window --print-title > proof/run3-breaking.log 2>&1 &
+          sleep 8
+          pgrep -x ThirdTimer
+          screencapture -x proof/3-breaking.png
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run3-breaking.log
+          grep -q "Break" proof/run3-breaking.log
+
+      - name: Package the app
+        working-directory: mac
+        run: ditto -c -k --keepParent build/ThirdTimer.app proof/ThirdTimer.app.zip
+
+      - name: Upload the app and the proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thirdtimer-mac
+          path: mac/proof
