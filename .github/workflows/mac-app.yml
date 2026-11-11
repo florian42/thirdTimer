@@ -6,6 +6,11 @@ on:
       - "mac/**"
       - ".github/workflows/mac-app.yml"
   workflow_dispatch:
+    inputs:
+      commit_screenshots:
+        description: "Commit the screenshots from this run to mac/docs/screenshots"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -105,3 +110,28 @@ jobs:
         with:
           name: thirdtimer-mac
           path: mac/proof
+
+  screenshots:
+    name: Commit screenshots
+    needs: mac-build
+    if: github.event_name == 'workflow_dispatch' && inputs.commit_screenshots
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: thirdtimer-mac
+          path: proof
+      - name: Commit the screenshots
+        run: |
+          mkdir -p mac/docs/screenshots
+          cp proof/working-window.png proof/working-menubar.png \
+             proof/breaking-window.png proof/breaking-menubar.png \
+             proof/1-working.png mac/docs/screenshots/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mac/docs/screenshots
+          git commit -m "Add screenshots of the Mac app from CI"
+          git push
