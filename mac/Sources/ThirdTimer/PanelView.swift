@@ -12,7 +12,7 @@ private enum Space {
     static let xl: CGFloat = 24
 }
 
-private let cornerRadius: CGFloat = 8
+private let cardRadius: CGFloat = 8
 
 /// The panel that opens from the menu bar item.
 struct PanelView: View {
@@ -234,7 +234,7 @@ struct PanelView: View {
         .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.accentColor.opacity(0.1))
-        .cornerRadius(cornerRadius)
+        .cornerRadius(cardRadius)
     }
 
     private func deliverablePicker(_ snap: Snapshot) -> some View {
@@ -365,7 +365,7 @@ struct PanelView: View {
         .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.1))
-        .cornerRadius(cornerRadius)
+        .cornerRadius(cardRadius)
     }
 
     private func copyLog(_ id: UUID) {
@@ -396,7 +396,7 @@ struct PanelView: View {
         .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.1))
-        .cornerRadius(cornerRadius)
+        .cornerRadius(cardRadius)
     }
 
     // MARK: Today and footer
@@ -484,9 +484,9 @@ struct SettingsSection: View {
                 set: { newValue in change(index) { $0.enabled = newValue } }
             ))
             .frame(width: 64, alignment: .leading)
-            minutePicker(value: day.startMinute) { newValue in change(index) { $0.startMinute = newValue } }
+            minutePicker(index, isStart: true)
             Text("to")
-            minutePicker(value: day.endMinute) { newValue in change(index) { $0.endMinute = newValue } }
+            minutePicker(index, isStart: false)
         }
         .foregroundStyle(.primary)
     }
@@ -497,8 +497,14 @@ struct SettingsSection: View {
         model.send(.setWorkingHours(hours))
     }
 
-    private func minutePicker(value: Int, set: @escaping (Int) -> Void) -> some View {
-        Picker("", selection: Binding(get: { value }, set: set)) {
+    private func minutePicker(_ index: Int, isStart: Bool) -> some View {
+        let day = model.state.workingHours[index]
+        return Picker("", selection: Binding(
+            get: { isStart ? day.startMinute : day.endMinute },
+            set: { newValue in
+                change(index) { if isStart { $0.startMinute = newValue } else { $0.endMinute = newValue } }
+            }
+        )) {
             ForEach(SettingsSection.halfHours, id: \.self) { minute in
                 Text(String(format: "%02d:%02d", minute / 60, minute % 60)).tag(minute)
             }
