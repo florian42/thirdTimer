@@ -1,14 +1,17 @@
 #!/bin/bash
-# Captures each ThirdTimer window to proof/<prefix>-<kind>.png and prints
-# small previews into the log as base64 JPEG.
+# Captures each ThirdTimer window to proof/<prefix>-<kind>.png, then prints
+# the text macOS can read in each capture, so the log shows what was drawn.
 set -euo pipefail
 prefix="$1"
-swift "$(dirname "$0")/windows.swift" > "proof/$prefix-windows.txt"
+here="$(dirname "$0")"
+swift "$here/windows.swift" > "proof/$prefix-windows.txt"
 cat "proof/$prefix-windows.txt"
 grep -q " 25 " "proof/$prefix-windows.txt"   # the menu bar item exists
 while read -r id layer x y w h; do
   kind=window; [ "$layer" = "25" ] && kind=menubar
   screencapture -x -o -l "$id" "proof/$prefix-$kind.png"
-  sips -s format jpeg -s formatOptions 45 -Z 560 "proof/$prefix-$kind.png" --out "/tmp/$prefix-$kind.jpg" >/dev/null
-  echo "PREVIEW $prefix-$kind $(base64 -i "/tmp/$prefix-$kind.jpg" | tr -d '\n')"
+  # Enlarge before reading: the CI screen is low resolution.
+  sips -Z $(( (w > h ? w : h) * 3 )) "proof/$prefix-$kind.png" --out "/tmp/$prefix-$kind-large.png" >/dev/null
+  echo "TEXT ON SCREEN: $prefix $kind (${w}x${h})"
+  swift "$here/ocr.swift" "/tmp/$prefix-$kind-large.png"
 done < "proof/$prefix-windows.txt"
