@@ -165,7 +165,10 @@ jobs:
             cp proof/*-window.png proof/*-menubar.png proof/full-*.png proof/1-working.png "$dir/"
           fi
           if [ "${{ inputs.walkthrough }}" = "true" ]; then
-            cp proof/walkthrough.mov mac/docs/walkthrough.mov
+            # Compress before committing: the raw recording is about 14 MB.
+            sudo apt-get install -y -q ffmpeg >/dev/null
+            ffmpeg -v error -y -i proof/walkthrough.mov -t 93 -r 30 -c:v libx264 -crf 26 \
+              -pix_fmt yuv420p -movflags +faststart -an mac/docs/walkthrough.mp4
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

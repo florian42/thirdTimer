@@ -50,6 +50,8 @@ swift test          # engine tests (needs Xcode, not only the Command Line Tools
 
 Flags for checking the app by hand or in CI:
 
+- `--walkthrough` plays a scripted day of use with captions and a fast clock.
+  A recording of it is in `docs/walkthrough.mp4`.
 - `--window` also shows the panel in an ordinary window.
 - `--demo working`, `breaking`, `ending`, `worst` or `idle` starts from a sample
   session (`worst` is realistic worst-case data). This replaces the saved state, so set `THIRDTIMER_STATE_FILE` too.

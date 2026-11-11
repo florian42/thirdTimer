@@ -127,7 +127,10 @@ struct PanelView: View {
 
     /// Answers "can I afford this break?" while the break is still inside what was earned.
     private func breakBudgetNote(_ snap: Snapshot, remaining: Double) -> String? {
-        guard remaining >= 0 else { return nil }
+        guard remaining >= 0 else {
+            // Past the end of a partial break: say what is still in the bank.
+            return snap.bankSeconds >= 60 ? "\(Format.short(snap.bankSeconds)) of break still banked." : nil
+        }
         var parts: [String] = []
         let staysBanked = snap.bankSeconds - remaining
         if staysBanked >= 60 {
