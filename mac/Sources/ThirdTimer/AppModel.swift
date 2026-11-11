@@ -169,6 +169,16 @@ final class AppModel: ObservableObject {
 
     private func seedDemo(_ kind: String) {
         var s = EngineState()
+        if kind == "worst" {
+            seedWorstCase(&s)
+        } else if kind != "idle" {
+            seedSample(&s, kind: kind)
+        }
+        state = s
+        save()
+    }
+
+    private func seedSample(_ s: inout EngineState, kind: String) {
         let start = Date().addingTimeInterval(-3 * 3600)
         let report = UUID(), slides = UUID()
         func apply(_ event: Event, _ offset: TimeInterval) {
@@ -191,7 +201,32 @@ final class AppModel: ObservableObject {
             apply(.startBreak(seconds: nil), 3 * 3600 - 4 * 60)
             apply(.recordCheckpoint("Section 3 drafted, tables missing"), 3 * 3600 - 3 * 60)
         }
-        state = s
-        save()
+    }
+
+    /// Realistic worst-case data: long names, a one-letter name, a deadline
+    /// that has passed, long notes with a URL, and a stint left running overnight.
+    private func seedWorstCase(_ s: inout EngineState) {
+        let start = Date().addingTimeInterval(-30 * 3600)
+        func apply(_ event: Event, _ offset: TimeInterval) {
+            s = engine.reduce(s, event, now: start.addingTimeInterval(offset)).0
+        }
+        let long = UUID()
+        apply(.addDeliverable(
+            id: long,
+            name: "Aleksandra Wiśniewska-Kowalczyk: Q3 board report for Northwind Industries Holdings (final, v12)",
+            deadline: Date().addingTimeInterval(2 * 86400)), 0)
+        apply(.addDeliverable(id: UUID(), name: "X", deadline: Date().addingTimeInterval(40 * 86400)), 0)
+        apply(.addDeliverable(id: UUID(), name: "Tax filing", deadline: Date().addingTimeInterval(-86400)), 0)
+        apply(.addDeliverable(id: UUID(), name: "Überprüfung der Lieferantenverträge für das Geschäftsjahr 2027",
+                              deadline: Date().addingTimeInterval(9 * 86400)), 0)
+        apply(.startWork(deliverableID: long), 0)
+        apply(.startBreak(seconds: nil), 2 * 3600)
+        apply(.recordCheckpoint(
+            "Sections 1 to 4 drafted; figures in 3.2 still disagree with the finance export at "
+            + "https://docs.northwind-industries-holdings.example.com/quarterly/2026/q3/board-report-final-v12"), 2 * 3600)
+        apply(.recordHandoff(
+            "Claude: reconcile every table in section 3 against the finance export and list each mismatch with its source row"),
+            2 * 3600)
+        apply(.resumeWork(deliverableID: long), 2 * 3600 + 600)
     }
 }

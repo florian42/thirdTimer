@@ -11,6 +11,10 @@ on:
         description: "Commit the screenshots from this run to mac/docs/screenshots"
         type: boolean
         default: false
+      screenshots_dir:
+        description: "Folder under mac/docs/screenshots to write them to"
+        type: string
+        default: "after"
 
 permissions:
   contents: read
@@ -89,6 +93,17 @@ jobs:
           cat proof/run3-breaking.log
           grep -q "Break" proof/run3-breaking.log
 
+          # 3b. Worst-case data and the empty state, for screenshots.
+          for kind in worst idle; do
+            "$BIN" --demo "$kind" --window --print-title > "proof/run-$kind.log" 2>&1 &
+            sleep 8
+            pgrep -x ThirdTimer
+            screencapture -x "proof/full-$kind.png"
+            ci/capture.sh "$kind"
+            pkill -x ThirdTimer
+            sleep 1
+          done
+
           # 4. A break that runs out: the alarm must fire once and be recorded.
           "$BIN" --demo ending --print-title > proof/run4-alarm.log 2>&1 &
           sleep 8
@@ -126,12 +141,11 @@ jobs:
           path: proof
       - name: Commit the screenshots
         run: |
-          mkdir -p mac/docs/screenshots
-          cp proof/working-window.png proof/working-menubar.png \
-             proof/breaking-window.png proof/breaking-menubar.png \
-             proof/1-working.png mac/docs/screenshots/
+          dir="mac/docs/screenshots/${{ inputs.screenshots_dir }}"
+          rm -rf "$dir" && mkdir -p "$dir"
+          cp proof/*-window.png proof/*-menubar.png proof/full-*.png proof/1-working.png "$dir/"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add mac/docs/screenshots
-          git commit -m "Add screenshots of the Mac app from CI"
+          git commit -m "Add ${{ inputs.screenshots_dir }} screenshots of the Mac app from CI"
           git push
