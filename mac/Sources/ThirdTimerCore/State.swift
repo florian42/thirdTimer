@@ -7,7 +7,6 @@ public enum Mode: String, Codable, Equatable, Sendable {
 public struct Deliverable: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
-    public var deadline: Date
     public var isDone: Bool
     public var completedAt: Date?
 }
@@ -49,19 +48,6 @@ public struct Checkpoint: Codable, Equatable, Sendable {
     public var deliverableID: UUID?
 }
 
-/// Working hours for one day of the week, in minutes after midnight.
-public struct DayHours: Codable, Equatable, Sendable {
-    public var enabled: Bool
-    public var startMinute: Int
-    public var endMinute: Int
-
-    public init(enabled: Bool, startMinute: Int, endMinute: Int) {
-        self.enabled = enabled
-        self.startMinute = startMinute
-        self.endMinute = endMinute
-    }
-}
-
 /// What to show the user when they come back to work.
 public struct ReturnInfo: Codable, Equatable, Sendable {
     public var checkpoint: String?
@@ -100,16 +86,10 @@ public struct EngineState: Codable, Equatable, Sendable {
     public var workLog: [WorkEntry] = []
     public var breakLog: [BreakEntry] = []
     public var checkpoints: [Checkpoint] = []
-    /// Seven entries, Sunday first.
-    public var workingHours: [DayHours] = EngineState.defaultWorkingHours
     public var settings = Settings()
     public var returnInfo: ReturnInfo?
 
     public init() {}
-
-    public static let defaultWorkingHours: [DayHours] = (0..<7).map { index in
-        DayHours(enabled: index >= 1 && index <= 5, startMinute: 9 * 60, endMinute: 17 * 60)
-    }
 
     public var ratio: Double { 1.0 / Double(ratioDenominator) }
 
@@ -141,10 +121,9 @@ public enum Event: Equatable, Sendable {
     case resumeWork(deliverableID: UUID?)
     case alarmFired
     case setRatio(denominator: Int)
-    case addDeliverable(id: UUID, name: String, deadline: Date)
-    case editDeliverable(id: UUID, name: String, deadline: Date)
+    case addDeliverable(id: UUID, name: String)
+    case renameDeliverable(id: UUID, name: String)
     case completeDeliverable(id: UUID)
-    case setWorkingHours([DayHours])
     case setHandoffPrompt(Bool)
     case setLaunchAtLogin(Bool)
     case resetSession

@@ -213,10 +213,8 @@ final class AppModel: ObservableObject {
         func apply(_ event: Event, _ offset: TimeInterval) {
             s = engine.reduce(s, event, now: start.addingTimeInterval(offset)).0
         }
-        apply(.addDeliverable(id: report, name: "Quarterly report",
-                              deadline: Date().addingTimeInterval(3 * 86400)), 0)
-        apply(.addDeliverable(id: slides, name: "Board slides",
-                              deadline: Date().addingTimeInterval(6 * 86400)), 0)
+        apply(.addDeliverable(id: report, name: "Quarterly report"), 0)
+        apply(.addDeliverable(id: slides, name: "Board slides"), 0)
         apply(.startWork(deliverableID: report), 0)
         apply(.startBreak(seconds: nil), 75 * 60)
         apply(.recordCheckpoint("Intro done, section 2 half drafted"), 76 * 60)
@@ -232,8 +230,8 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Realistic worst-case data: long names, a one-letter name, a deadline
-    /// that has passed, long notes with a URL, and a stint left running overnight.
+    /// Realistic worst-case data: long names, a one-letter name, long notes
+    /// with a URL, and a stint left running overnight.
     private func seedWorstCase(_ s: inout EngineState) {
         let start = Date().addingTimeInterval(-30 * 3600)
         func apply(_ event: Event, _ offset: TimeInterval) {
@@ -242,12 +240,10 @@ final class AppModel: ObservableObject {
         let long = UUID()
         apply(.addDeliverable(
             id: long,
-            name: "Aleksandra Wiśniewska-Kowalczyk: Q3 board report for Northwind Industries Holdings (final, v12)",
-            deadline: Date().addingTimeInterval(2 * 86400)), 0)
-        apply(.addDeliverable(id: UUID(), name: "X", deadline: Date().addingTimeInterval(40 * 86400)), 0)
-        apply(.addDeliverable(id: UUID(), name: "Tax filing", deadline: Date().addingTimeInterval(-86400)), 0)
-        apply(.addDeliverable(id: UUID(), name: "Überprüfung der Lieferantenverträge für das Geschäftsjahr 2027",
-                              deadline: Date().addingTimeInterval(9 * 86400)), 0)
+            name: "Aleksandra Wiśniewska-Kowalczyk: Q3 board report for Northwind Industries Holdings (final, v12)"), 0)
+        apply(.addDeliverable(id: UUID(), name: "X"), 0)
+        apply(.addDeliverable(id: UUID(), name: "Tax filing"), 0)
+        apply(.addDeliverable(id: UUID(), name: "Überprüfung der Lieferantenverträge für das Geschäftsjahr 2027"), 0)
         apply(.startWork(deliverableID: long), 0)
         apply(.startBreak(seconds: nil), 2 * 3600)
         apply(.recordCheckpoint(

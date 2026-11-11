@@ -61,7 +61,6 @@ public enum Persistence {
         var workLog: [WorkEntry]
         var breakLog: [BreakEntry]
         var checkpoints: [Checkpoint]
-        var workingHours: [DayHours]
         var settings: Settings
         var returnInfo: ReturnInfo?
 
@@ -79,7 +78,6 @@ public enum Persistence {
             state.workLog = workLog
             state.breakLog = breakLog
             state.checkpoints = checkpoints
-            state.workingHours = workingHours
             state.settings = settings
             state.returnInfo = returnInfo
             return state

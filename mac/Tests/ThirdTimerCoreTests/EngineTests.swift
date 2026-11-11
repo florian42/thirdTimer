@@ -41,8 +41,8 @@ struct EngineTests {
         engine.snapshot(state, now: time)
     }
 
-    mutating func addReport(deadline: Date? = nil) {
-        send(.addDeliverable(id: report, name: "Report", deadline: deadline ?? mon(17, day: 13)), at: mon(8))
+    mutating func addReport() {
+        send(.addDeliverable(id: report, name: "Report"), at: mon(8))
     }
 
     let minute = 60.0
@@ -269,22 +269,21 @@ struct EngineTests {
 
     // MARK: Deliverables and hours invested (stories 31-36, 43-46)
 
-    @Test mutating func deliverableNeedsOnlyANameAndADeadline() {
+    @Test mutating func aDeliverableNeedsOnlyAName() {
         addReport()
         let v = view(at: mon(9))
         #expect(v.activeDeliverables.map(\.name) == ["Report"])
-        #expect(v.activeDeliverables[0].deadline == mon(17, day: 13))
         #expect(v.activeDeliverables[0].investedSeconds == 0)
     }
 
     @Test mutating func deliverableWithoutANameIsRefused() {
-        send(.addDeliverable(id: report, name: "   ", deadline: mon(17)), at: mon(8))
+        send(.addDeliverable(id: report, name: "   "), at: mon(8))
         #expect(view(at: mon(9)).activeDeliverables == [])
     }
 
     @Test mutating func workIsAttributedToTheChosenDeliverable() {
         addReport()
-        send(.addDeliverable(id: slides, name: "Slides", deadline: mon(17, day: 12)), at: mon(8))
+        send(.addDeliverable(id: slides, name: "Slides"), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.resumeWork(deliverableID: slides), at: mon(10, 20))
@@ -296,7 +295,7 @@ struct EngineTests {
 
     @Test mutating func lastUsedDeliverableIsPreselected() {
         addReport()
-        send(.addDeliverable(id: slides, name: "Slides", deadline: mon(17, day: 12)), at: mon(8))
+        send(.addDeliverable(id: slides, name: "Slides"), at: mon(8))
         #expect(view(at: mon(9)).preselectedDeliverableID == nil)
         send(.startWork(deliverableID: slides), at: mon(9))
         send(.resetSession, at: mon(9, 30))
@@ -312,12 +311,14 @@ struct EngineTests {
         #expect(v.activeDeliverables[0].investedSeconds == 0)
     }
 
-    @Test mutating func editingADeliverable() {
+    @Test mutating func renamingADeliverableKeepsItsHours() {
         addReport()
-        send(.editDeliverable(id: report, name: "Board report", deadline: mon(12, day: 12)), at: mon(9))
-        let d = view(at: mon(9)).activeDeliverables[0]
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        send(.renameDeliverable(id: report, name: "Board report"), at: mon(10))
+        let d = view(at: mon(10)).activeDeliverables[0]
         #expect(d.name == "Board report")
-        #expect(d.deadline == mon(12, day: 12))
+        #expect(d.investedSeconds == hour)
     }
 
     @Test mutating func completedDeliverableLeavesTheActiveListAndKeepsItsHours() {
@@ -330,78 +331,6 @@ struct EngineTests {
         #expect(v.doneDeliverables.map(\.name) == ["Report"])
         #expect(v.doneDeliverables[0].investedSeconds == 2 * hour)
         #expect(v.preselectedDeliverableID == nil)
-    }
-
-    // MARK: Runway (stories 37-42)
-
-    @Test mutating func runwayIsWorkingHoursTimesTheWorkingShare() {
-        // Monday 09:00 to Friday 17:00 at 8 hours a day is 40 working hours; 75% of it is work.
-        addReport()
-        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 30 * hour))
-    }
-
-    @Test mutating func runwayIgnoresTimeOutsideWorkingHoursAndDaysOff() {
-        // Deadline the following Monday 13:00: the weekend adds nothing.
-        addReport(deadline: mon(13, day: 16))
-        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 33 * hour))
-        // In the evening only the coming days count.
-        #expect(near(view(at: mon(20)).activeDeliverables[0].runwaySeconds, 27 * hour))
-    }
-
-    @Test mutating func anHourOfWorkLowersRunwayByAnHour() {
-        addReport()
-        send(.startWork(deliverableID: report), at: mon(9))
-        #expect(near(view(at: mon(10)).activeDeliverables[0].runwaySeconds, 29 * hour))
-    }
-
-    @Test mutating func anEarnedBreakLeavesRunwayUnchanged() {
-        addReport()
-        send(.startWork(deliverableID: report), at: mon(9))
-        send(.startBreak(seconds: nil), at: mon(10))
-        let atStart = view(at: mon(10)).activeDeliverables[0].runwaySeconds
-        let midway = view(at: mon(10, 10)).activeDeliverables[0].runwaySeconds
-        send(.resumeWork(deliverableID: report), at: mon(10, 20))
-        let atEnd = view(at: mon(10, 20)).activeDeliverables[0].runwaySeconds
-        #expect(near(atStart, 29 * hour))
-        #expect(near(midway, atStart))
-        #expect(near(atEnd, atStart))
-    }
-
-    @Test mutating func anOverrunDoesLowerRunway() {
-        addReport()
-        send(.startWork(deliverableID: report), at: mon(9))
-        send(.startBreak(seconds: nil), at: mon(10))
-        // 20 earned minutes, then 40 more: those 40 minutes cost 30 minutes of work time.
-        #expect(near(view(at: mon(11)).activeDeliverables[0].runwaySeconds, 28.5 * hour))
-    }
-
-    @Test mutating func aTighterRatioRaisesRunway() {
-        addReport()
-        send(.setRatio(denominator: 6), at: mon(9))
-        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 40 * hour * 6 / 7))
-    }
-
-    @Test mutating func runwayFollowsADeadlineChange() {
-        addReport()
-        send(.editDeliverable(id: report, name: "Report", deadline: mon(17, day: 11)), at: mon(9))
-        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 18 * hour))
-    }
-
-    @Test mutating func runwayFollowsWorkingHours() {
-        addReport()
-        var hours = EngineState.defaultWorkingHours
-        hours[5] = DayHours(enabled: false, startMinute: 0, endMinute: 0)      // Friday off
-        hours[1] = DayHours(enabled: true, startMinute: 8 * 60, endMinute: 18 * 60) // Monday 08-18
-        send(.setWorkingHours(hours), at: mon(8))
-        // Monday 10h + Tue, Wed, Thu 8h each = 34h; 75% is 25.5h.
-        #expect(near(view(at: mon(8)).activeDeliverables[0].runwaySeconds, 25.5 * hour))
-    }
-
-    @Test mutating func runwayIsZeroOnceTheDeadlineHasPassed() {
-        addReport(deadline: mon(12))
-        #expect(view(at: mon(13)).activeDeliverables[0].runwaySeconds == 0)
-        send(.startWork(deliverableID: report), at: mon(13))
-        #expect(view(at: mon(15)).activeDeliverables[0].runwaySeconds == 0)
     }
 
     // MARK: Checkpoints (stories 47-51)
@@ -436,7 +365,7 @@ struct EngineTests {
 
     @Test mutating func checkpointsFormALogPerDeliverable() {
         addReport()
-        send(.addDeliverable(id: slides, name: "Slides", deadline: mon(17, day: 12)), at: mon(8))
+        send(.addDeliverable(id: slides, name: "Slides"), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.recordCheckpoint("Intro done"), at: mon(10))
@@ -616,7 +545,7 @@ struct EngineTests {
 
     @Test mutating func aLongDeliverableNameIsCutShortInTheMenuBar() {
         let name = "Aleksandra Wiśniewska-Kowalczyk: Q3 board report for Northwind Industries Holdings"
-        send(.addDeliverable(id: report, name: name, deadline: mon(17, day: 13)), at: mon(8))
+        send(.addDeliverable(id: report, name: name), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
         let v = view(at: mon(9, 34))
         #expect(v.menuTitle == "Aleksandra Wiśniewska-K… · 34m")
@@ -626,20 +555,20 @@ struct EngineTests {
 
     @Test mutating func aNameAtTheMenuBarLimitIsShownWhole() {
         let name = String(repeating: "x", count: Engine.menuNameLimit)
-        send(.addDeliverable(id: report, name: name, deadline: mon(17, day: 13)), at: mon(8))
+        send(.addDeliverable(id: report, name: name), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
         #expect(view(at: mon(9, 1)).menuTitle == "\(name) · 1m")
     }
 
     @Test mutating func aOneLetterNameWorks() {
-        send(.addDeliverable(id: report, name: "X", deadline: mon(17, day: 13)), at: mon(8))
+        send(.addDeliverable(id: report, name: "X"), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
         #expect(view(at: mon(9, 1)).menuTitle == "X · 1m")
     }
 
     @Test mutating func namesAndNotesHaveALengthLimit() {
         let long = String(repeating: "word ", count: 100)
-        send(.addDeliverable(id: report, name: long, deadline: mon(17, day: 13)), at: mon(8))
+        send(.addDeliverable(id: report, name: long), at: mon(8))
         #expect(view(at: mon(8)).activeDeliverables[0].name.count <= Engine.nameLimit)
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
@@ -647,12 +576,6 @@ struct EngineTests {
         send(.recordHandoff(long), at: mon(10))
         #expect(state.checkpoints[0].text.count <= Engine.noteLimit)
         #expect((state.currentBreak?.handoff?.count ?? 0) <= Engine.noteLimit)
-    }
-
-    @Test mutating func aPassedDeadlineIsFlagged() {
-        addReport(deadline: mon(12))
-        #expect(!view(at: mon(11)).activeDeliverables[0].deadlinePassed)
-        #expect(view(at: mon(13)).activeDeliverables[0].deadlinePassed)
     }
 
     @Test mutating func aStintLeftRunningOvernightStillReadsCorrectly() {

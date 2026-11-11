@@ -97,18 +97,17 @@ public struct Engine: Sendable {
             }
             s.ratioDenominator = denominator
 
-        case .addDeliverable(let id, let rawName, let deadline):
+        case .addDeliverable(let id, let rawName):
             let name = oneLine(rawName, limit: Engine.nameLimit)
             guard !name.isEmpty, !s.deliverables.contains(where: { $0.id == id }) else { return (state, []) }
-            s.deliverables.append(Deliverable(id: id, name: name, deadline: deadline, isDone: false, completedAt: nil))
+            s.deliverables.append(Deliverable(id: id, name: name, isDone: false, completedAt: nil))
 
-        case .editDeliverable(let id, let rawName, let deadline):
+        case .renameDeliverable(let id, let rawName):
             let name = oneLine(rawName, limit: Engine.nameLimit)
             guard !name.isEmpty, let index = s.deliverables.firstIndex(where: { $0.id == id }) else {
                 return (state, [])
             }
             s.deliverables[index].name = name
-            s.deliverables[index].deadline = deadline
 
         case .completeDeliverable(let id):
             guard let index = s.deliverables.firstIndex(where: { $0.id == id }), !s.deliverables[index].isDone else {
@@ -116,14 +115,6 @@ public struct Engine: Sendable {
             }
             s.deliverables[index].isDone = true
             s.deliverables[index].completedAt = now
-
-        case .setWorkingHours(let hours):
-            guard hours.count == 7 else { return (state, []) }
-            s.workingHours = hours.map { day in
-                let start = min(max(0, day.startMinute), 24 * 60)
-                let end = min(max(start, day.endMinute), 24 * 60)
-                return DayHours(enabled: day.enabled, startMinute: start, endMinute: end)
-            }
 
         case .setHandoffPrompt(let on):
             s.settings.handoffPrompt = on
@@ -222,11 +213,8 @@ public struct Engine: Sendable {
             DeliverableView(
                 id: d.id,
                 name: d.name,
-                deadline: d.deadline,
                 isDone: d.isDone,
-                deadlinePassed: d.deadline <= now,
                 investedSeconds: invested(state, deliverableID: d.id, now: now),
-                runwaySeconds: runway(state, deadline: d.deadline, liveBank: liveBank, now: now),
                 checkpoints: state.checkpoints.filter { $0.deliverableID == d.id }
             )
         }
@@ -310,42 +298,6 @@ public struct Engine: Sendable {
         return total
     }
 
-    /// Work time left until the deadline. Of the working hours that remain,
-    /// the banked break time is already spoken for, and the rest splits into
-    /// work and the breaks that work will earn. So an hour of work lowers
-    /// runway by an hour, and an earned break leaves it unchanged.
-    private func runway(_ state: EngineState, deadline: Date, liveBank: Double, now: Date) -> Double {
-        let available = workingSeconds(from: now, to: deadline, hours: state.workingHours)
-        return max(0, available - liveBank) / (1 + state.ratio)
-    }
-
-    /// Seconds inside the configured working hours between two moments.
-    public func workingSeconds(from: Date, to: Date, hours: [DayHours]) -> Double {
-        guard to > from, hours.count == 7 else { return 0 }
-        var total = 0.0
-        var day = calendar.startOfDay(for: from)
-        while day < to {
-            let weekday = calendar.component(.weekday, from: day)
-            let h = hours[weekday - 1]
-            if h.enabled, h.endMinute > h.startMinute {
-                let start = moment(day, minute: h.startMinute)
-                let end = moment(day, minute: h.endMinute)
-                total += overlap(start, end, from, to)
-            }
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-            day = next
-        }
-        return total
-    }
-
-    private func moment(_ day: Date, minute: Int) -> Date {
-        if minute < 24 * 60,
-           let date = calendar.date(bySettingHour: minute / 60, minute: minute % 60, second: 0, of: day) {
-            return date
-        }
-        return day.addingTimeInterval(Double(minute) * 60)
-    }
-
     private func overlap(_ aStart: Date, _ aEnd: Date, _ bStart: Date, _ bEnd: Date) -> Double {
         max(0, min(aEnd, bEnd).timeIntervalSince(max(aStart, bStart)))
     }
@@ -356,11 +308,8 @@ public struct Engine: Sendable {
 public struct DeliverableView: Equatable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
-    public var deadline: Date
     public var isDone: Bool
-    public var deadlinePassed: Bool
     public var investedSeconds: Double
-    public var runwaySeconds: Double
     public var checkpoints: [Checkpoint]
 }
 

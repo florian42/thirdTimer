@@ -22,10 +22,8 @@ struct PanelView: View {
     @State private var checkpointText = ""
     @State private var handoffText = ""
     @State private var newName = ""
-    @State private var newDeadline = PanelView.defaultDeadline()
     @State private var editingID: UUID?
     @State private var editName = ""
-    @State private var editDeadline = Date()
     @State private var copiedID: UUID?
     @State private var confirmingReset = false
 
@@ -57,12 +55,6 @@ struct PanelView: View {
             // Don't open with the cursor in a text field: Return should trigger the main action.
             DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
         }
-    }
-
-    /// Three days ahead at the end of the working day, not at the current minute.
-    private static func defaultDeadline() -> Date {
-        let day = Date().addingTimeInterval(3 * 86400)
-        return Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: day) ?? day
     }
 
     // MARK: Timer
@@ -135,10 +127,6 @@ struct PanelView: View {
         let staysBanked = snap.bankSeconds - remaining
         if staysBanked >= 60 {
             parts.append("\(Format.short(staysBanked)) more stays banked.")
-        }
-        if let current = snap.activeDeliverables.first(where: { $0.id == snap.currentDeliverableID }),
-           !current.deadlinePassed {
-            parts.append("This break is budgeted: \(Format.short(current.runwaySeconds)) of work time still left.")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
@@ -279,7 +267,7 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: Space.s) {
             sectionTitle("Deliverables")
             if snap.activeDeliverables.isEmpty {
-                secondary("Add what you have to deliver and when. Third Timer then shows how much work time is left.")
+                secondary("Add what you're working on, and Third Timer keeps track of the time you put into it.")
             }
             ForEach(snap.activeDeliverables) { d in
                 if editingID == d.id {
@@ -289,13 +277,10 @@ struct PanelView: View {
                 }
             }
             VStack(alignment: .leading, spacing: Space.s) {
-                TextField("New deliverable", text: $newName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(addDeliverable)
                 HStack(spacing: Space.s) {
-                    Text("Due").font(.callout).foregroundStyle(.secondary)
-                    DatePicker("Due", selection: $newDeadline).labelsHidden()
-                    Spacer()
+                    TextField("New deliverable", text: $newName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(addDeliverable)
                     Button("Add", action: addDeliverable)
                         .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -319,7 +304,7 @@ struct PanelView: View {
 
     private func addDeliverable() {
         guard !newName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        model.send(.addDeliverable(id: UUID(), name: newName, deadline: newDeadline))
+        model.send(.addDeliverable(id: UUID(), name: newName))
         newName = ""
     }
 
@@ -327,16 +312,10 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: Space.s) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(d.name).fontWeight(.medium).lineLimit(2)
-                // The number that answers "can I afford a break?" leads; the rest is secondary.
-                if d.deadlinePassed {
-                    Text("Past its deadline").font(.callout)
-                } else {
-                    (Text(Format.short(d.runwaySeconds)).fontWeight(.semibold)
-                        + Text(" of work time left").foregroundColor(.secondary))
-                        .font(.callout)
-                        .monospacedDigit()
-                }
-                secondary("Due \(d.deadline.formatted(date: .abbreviated, time: .shortened)) · \(Format.short(d.investedSeconds)) invested")
+                (Text(Format.short(d.investedSeconds)).fontWeight(.semibold)
+                    + Text(" invested").foregroundColor(.secondary))
+                    .font(.callout)
+                    .monospacedDigit()
             }
             if !d.checkpoints.isEmpty {
                 DisclosureGroup("Checkpoints (\(d.checkpoints.count))") {
@@ -359,7 +338,6 @@ struct PanelView: View {
                 Button("Edit") {
                     editingID = d.id
                     editName = d.name
-                    editDeadline = d.deadline
                 }
                 if !d.checkpoints.isEmpty {
                     Button(copiedID == d.id ? "Copied" : "Copy log") { copyLog(d.id) }
@@ -388,12 +366,8 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: Space.s) {
             TextField("Name", text: $editName).textFieldStyle(.roundedBorder)
             HStack(spacing: Space.s) {
-                Text("Due").font(.callout).foregroundStyle(.secondary)
-                DatePicker("Due", selection: $editDeadline).labelsHidden()
-            }
-            HStack(spacing: Space.s) {
                 Button("Save") {
-                    model.send(.editDeliverable(id: d.id, name: editName, deadline: editDeadline))
+                    model.send(.renameDeliverable(id: d.id, name: editName))
                     editingID = nil
                 }
                 .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -449,14 +423,9 @@ struct PanelView: View {
     }
 }
 
-/// Settings: hand-off prompt, start at login, working hours.
+/// Settings: hand-off prompt and start at login.
 struct SettingsSection: View {
     @EnvironmentObject private var model: AppModel
-
-    private static let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    /// Monday first in the list, as most working weeks start there.
-    private static let dayOrder = [1, 2, 3, 4, 5, 6, 0]
-    private static let halfHours = Array(stride(from: 0, through: 24 * 60, by: 30))
 
     var body: some View {
         DisclosureGroup("Settings") {
@@ -469,54 +438,12 @@ struct SettingsSection: View {
                     get: { model.state.settings.launchAtLogin },
                     set: { model.send(.setLaunchAtLogin($0)) }
                 ))
-                Text("Working hours").fontWeight(.medium).padding(.top, Space.s)
-                Text("Work time left is counted inside these hours.")
-                    .font(.caption).foregroundStyle(.secondary)
-                ForEach(SettingsSection.dayOrder, id: \.self) { index in
-                    dayRow(index)
-                }
             }
             .font(.callout)
+            .foregroundStyle(.primary)
             .padding(.top, Space.s)
         }
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(.secondary)
-    }
-
-    private func dayRow(_ index: Int) -> some View {
-        let day = model.state.workingHours[index]
-        return HStack(spacing: Space.s) {
-            Toggle(SettingsSection.dayNames[index], isOn: Binding(
-                get: { day.enabled },
-                set: { newValue in change(index) { $0.enabled = newValue } }
-            ))
-            .frame(width: 64, alignment: .leading)
-            minutePicker(index, isStart: true)
-            Text("to")
-            minutePicker(index, isStart: false)
-        }
-        .foregroundStyle(.primary)
-    }
-
-    private func change(_ index: Int, _ edit: (inout DayHours) -> Void) {
-        var hours = model.state.workingHours
-        edit(&hours[index])
-        model.send(.setWorkingHours(hours))
-    }
-
-    private func minutePicker(_ index: Int, isStart: Bool) -> some View {
-        let day = model.state.workingHours[index]
-        return Picker("", selection: Binding(
-            get: { isStart ? day.startMinute : day.endMinute },
-            set: { newValue in
-                change(index) { if isStart { $0.startMinute = newValue } else { $0.endMinute = newValue } }
-            }
-        )) {
-            ForEach(SettingsSection.halfHours, id: \.self) { minute in
-                Text(String(format: "%02d:%02d", minute / 60, minute % 60)).tag(minute)
-            }
-        }
-        .labelsHidden()
-        .frame(width: 80)
     }
 }

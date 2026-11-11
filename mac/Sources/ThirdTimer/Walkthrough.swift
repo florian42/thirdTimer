@@ -20,12 +20,9 @@ final class Walkthrough: ObservableObject {
     private func run() async {
         let model = AppModel.shared
         let report = UUID()
-        let due = Calendar.current.date(
-            bySettingHour: 17, minute: 0, second: 0, of: Date().addingTimeInterval(3 * 86400)) ?? Date()
-
-        await say("Third Timer lives in the menu bar. Start by adding what you have to deliver, and when.", 4)
-        model.send(.addDeliverable(id: report, name: "Quarterly report", deadline: due))
-        await say("It now shows how much work time is left before the deadline, with breaks already budgeted.", 5)
+        await say("Third Timer lives in the menu bar. Start by adding what you are working on.", 4)
+        model.send(.addDeliverable(id: report, name: "Quarterly report"))
+        await say("It keeps track of the time you put into it.", 4)
 
         await say("Start working.", 2, keys: "⌃⌥T")
         model.send(.startWork(deliverableID: report))
@@ -42,7 +39,7 @@ final class Walkthrough: ObservableObject {
         model.send(.recordCheckpoint("Intro done, section 2 half drafted"))
         await say("…and hand something to Claude, so progress continues while you're away.", 3)
         model.send(.recordHandoff("Claude: check the figures in section 3"))
-        await say("The break is budgeted: the work time left does not shrink while you rest.", 3)
+        await say("You earned this break. Step away from the screen.", 3)
         await fastForward(10 * 60, label: "10 minutes later")
 
         await say("Back early? The unused break time stays banked, and your notes are waiting.", 3, keys: "⌃⌥T")
