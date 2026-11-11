@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 import ServiceManagement
 import ThirdTimerCore
 import UserNotifications
@@ -15,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published var loadProblem: String?
 
     let engine = Engine(calendar: .current)
+    private let log = Logger(subsystem: "app.thirdtimer.ThirdTimer", category: "app")
     private let stateURL: URL
     private var ticker: Timer?
     private var alarmTimer: Timer?
@@ -94,7 +96,7 @@ final class AppModel: ObservableObject {
             do {
                 if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
             } catch {
-                NSLog("ThirdTimer: could not change start at login: \(error.localizedDescription)")
+                log.error("Could not change start at login: \(error.localizedDescription, privacy: .public)")
             }
         case .save:
             save()
@@ -145,6 +147,7 @@ final class AppModel: ObservableObject {
             let backup = stateURL.deletingLastPathComponent()
                 .appendingPathComponent("state-unreadable-\(Int(Date().timeIntervalSince1970)).json")
             try? FileManager.default.moveItem(at: stateURL, to: backup)
+            log.error("Could not read saved state: \(String(describing: error), privacy: .public)")
             loadProblem = "The saved state could not be read. It was kept as \(backup.lastPathComponent)."
         }
     }
@@ -155,7 +158,7 @@ final class AppModel: ObservableObject {
                 at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Persistence.encode(state).write(to: stateURL, options: .atomic)
         } catch {
-            NSLog("ThirdTimer: could not save state: \(error.localizedDescription)")
+            log.error("Could not save state: \(error.localizedDescription, privacy: .public)")
         }
     }
 

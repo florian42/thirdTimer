@@ -1,22 +1,26 @@
-import XCTest
-@testable import ThirdTimerCore
+import Foundation
+import Testing
+import ThirdTimerCore
 
 /// Every test drives the session engine through its one entry point:
 /// events with times go in, and the state the user would see is checked.
-final class EngineTests: XCTestCase {
-    var engine: Engine!
-    var state: EngineState!
+/// A fresh suite value is made for each test, so nothing leaks between them.
+struct EngineTests {
+    let engine: Engine
+    var state = EngineState()
     var lastEffects: [Effect] = []
 
     let report = UUID()
     let slides = UUID()
 
-    override func setUp() {
+    init() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         engine = Engine(calendar: calendar)
-        state = EngineState()
-        lastEffects = []
+    }
+
+    func near(_ a: Double, _ b: Double) -> Bool {
+        abs(a - b) < 0.001
     }
 
     /// Monday 9 November 2026, at the given time, UTC.
@@ -27,7 +31,7 @@ final class EngineTests: XCTestCase {
         return engine.calendar.date(from: c)!
     }
 
-    func send(_ event: Event, at time: Date) {
+    mutating func send(_ event: Event, at time: Date) {
         let (next, effects) = engine.reduce(state, event, now: time)
         state = next
         lastEffects = effects
@@ -37,7 +41,7 @@ final class EngineTests: XCTestCase {
         engine.snapshot(state, now: time)
     }
 
-    func addReport(deadline: Date? = nil) {
+    mutating func addReport(deadline: Date? = nil) {
         send(.addDeliverable(id: report, name: "Report", deadline: deadline ?? mon(17, day: 13)), at: mon(8))
     }
 
@@ -46,314 +50,311 @@ final class EngineTests: XCTestCase {
 
     // MARK: Menu bar and basic timing (stories 2-4, 6-8, 12)
 
-    func testIdleIsShownAsIdle() {
-        XCTAssertEqual(view(at: mon(9)).mode, .idle)
-        XCTAssertEqual(view(at: mon(9)).menuTitle, "⏸ Idle")
+    @Test mutating func idleIsShownAsIdle() {
+        #expect(view(at: mon(9)).mode == .idle)
+        #expect(view(at: mon(9)).menuTitle == "Idle")
     }
 
-    func testWorkingShowsDeliverableAndElapsedTime() {
+    @Test mutating func workingShowsDeliverableAndElapsedTime() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         let v = view(at: mon(9, 34))
-        XCTAssertEqual(v.mode, .working)
-        XCTAssertEqual(v.menuTitle, "🟢 Report · 34m")
-        XCTAssertEqual(v.elapsedSeconds, 34 * minute)
+        #expect(v.mode == .working)
+        #expect(v.menuTitle == "Report · 34m")
+        #expect(v.elapsedSeconds == 34 * minute)
     }
 
-    func testLongStintShowsHoursAndMinutes() {
+    @Test mutating func longStintShowsHoursAndMinutes() {
         send(.startWork(deliverableID: nil), at: mon(9))
-        XCTAssertEqual(view(at: mon(10, 5)).menuTitle, "🟢 Working · 1h 05m")
+        #expect(view(at: mon(10, 5)).menuTitle == "Working · 1h 05m")
     }
 
-    func testBreakShowsCountdown() {
+    @Test mutating func breakShowsCountdown() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         let v = view(at: mon(9, 53, 48))
-        XCTAssertEqual(v.mode, .breaking)
-        XCTAssertEqual(v.breakRemainingSeconds!, 6 * minute + 12, accuracy: 0.001)
-        XCTAssertEqual(v.menuTitle, "🔵 Break · 6:12 left")
+        #expect(v.mode == .breaking)
+        #expect(near(v.breakRemainingSeconds!, 6 * minute + 12))
+        #expect(v.menuTitle == "Break · 6:12 left")
     }
 
-    func testResumeReturnsToWorking() {
+    @Test mutating func resumeReturnsToWorking() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.resumeWork(deliverableID: nil), at: mon(10))
-        XCTAssertEqual(view(at: mon(10, 1)).mode, .working)
-        XCTAssertEqual(view(at: mon(10, 1)).elapsedSeconds, minute)
+        #expect(view(at: mon(10, 1)).mode == .working)
+        #expect(view(at: mon(10, 1)).elapsedSeconds == minute)
     }
 
-    func testEventsThatDoNotFitTheModeChangeNothing() {
+    @Test mutating func eventsThatDoNotFitTheModeChangeNothing() {
         let before = state
         send(.startBreak(seconds: nil), at: mon(9))
         send(.resumeWork(deliverableID: nil), at: mon(9))
         send(.recordCheckpoint("x"), at: mon(9))
-        XCTAssertEqual(state, before)
-        XCTAssertEqual(lastEffects, [])
+        #expect(state == before)
+        #expect(lastEffects == [])
         send(.startWork(deliverableID: nil), at: mon(9))
         let working = state
         send(.startWork(deliverableID: nil), at: mon(9, 30))
-        XCTAssertEqual(state, working)
+        #expect(state == working)
     }
 
-    func testResetClearsTheSessionButKeepsTheRecord() {
+    @Test mutating func resetClearsTheSessionButKeepsTheRecord() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: 60), at: mon(10))
         send(.resumeWork(deliverableID: report), at: mon(10, 1))
         send(.resetSession, at: mon(10, 31))
         let v = view(at: mon(10, 31))
-        XCTAssertEqual(v.mode, .idle)
-        XCTAssertEqual(v.bankSeconds, 0)
-        XCTAssertEqual(v.activeDeliverables[0].investedSeconds, 90 * minute)
-        XCTAssertEqual(v.todayWorkSeconds, 90 * minute)
-        XCTAssertEqual(state.ratioDenominator, 3)
+        #expect(v.mode == .idle)
+        #expect(v.bankSeconds == 0)
+        #expect(v.activeDeliverables[0].investedSeconds == 90 * minute)
+        #expect(v.todayWorkSeconds == 90 * minute)
+        #expect(state.ratioDenominator == 3)
     }
 
-    func testResetDuringABreakCancelsTheAlarm() {
+    @Test mutating func resetDuringABreakCancelsTheAlarm() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.resetSession, at: mon(10, 5))
-        XCTAssertTrue(lastEffects.contains(.cancelAlarm))
-        XCTAssertEqual(view(at: mon(10, 5)).todayBreakSeconds, 5 * minute)
+        #expect(lastEffects.contains(.cancelAlarm))
+        #expect(view(at: mon(10, 5)).todayBreakSeconds == 5 * minute)
     }
 
     // MARK: Break bank and ratio (stories 13-24)
 
-    func testDefaultRatioIsOneThird() {
-        XCTAssertEqual(view(at: mon(9)).ratioDenominator, 3)
+    @Test mutating func defaultRatioIsOneThird() {
+        #expect(view(at: mon(9)).ratioDenominator == 3)
     }
 
-    func testWorkEarnsBreakAtEachRatio() {
-        for (denominator, expectedMinutes) in [(2, 30.0), (3, 20.0), (4, 15.0), (5, 12.0), (6, 10.0)] {
-            setUp()
-            send(.setRatio(denominator: denominator), at: mon(8))
-            send(.startWork(deliverableID: nil), at: mon(9))
-            send(.startBreak(seconds: nil), at: mon(10))
-            XCTAssertEqual(view(at: mon(10)).bankSeconds, expectedMinutes * minute, accuracy: 0.001,
-                           "ratio 1/\(denominator)")
-        }
+    @Test(arguments: zip([2, 3, 4, 5, 6], [30.0, 20.0, 15.0, 12.0, 10.0]))
+    mutating func anHourOfWorkEarnsBreakAtEachRatio(denominator: Int, expectedMinutes: Double) {
+        send(.setRatio(denominator: denominator), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        #expect(near(view(at: mon(10)).bankSeconds, expectedMinutes * minute))
     }
 
-    func testRatiosOutsideTheListAreRefused() {
+    @Test mutating func ratiosOutsideTheListAreRefused() {
         send(.setRatio(denominator: 1), at: mon(9))
         send(.setRatio(denominator: 7), at: mon(9))
-        XCTAssertEqual(state.ratioDenominator, 3)
+        #expect(state.ratioDenominator == 3)
     }
 
-    func testBankGrowsLiveWhileWorking() {
+    @Test mutating func bankGrowsLiveWhileWorking() {
         send(.startWork(deliverableID: nil), at: mon(9))
-        XCTAssertEqual(view(at: mon(9, 30)).bankSeconds, 10 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(9, 30)).bankSeconds, 10 * minute))
     }
 
-    func testFullBreakUsesTheWholeBank() {
+    @Test mutating func fullBreakUsesTheWholeBank() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
-        XCTAssertEqual(view(at: mon(9, 45)).breakRemainingSeconds!, 15 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(9, 45)).breakRemainingSeconds!, 15 * minute))
         send(.resumeWork(deliverableID: nil), at: mon(10))
-        XCTAssertEqual(view(at: mon(10)).bankSeconds, 0, accuracy: 0.001)
+        #expect(near(view(at: mon(10)).bankSeconds, 0))
     }
 
-    func testEndingABreakEarlyKeepsTheRest() {
+    @Test mutating func endingABreakEarlyKeepsTheRest() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.resumeWork(deliverableID: nil), at: mon(9, 55))
-        XCTAssertEqual(view(at: mon(9, 55)).bankSeconds, 5 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(9, 55)).bankSeconds, 5 * minute))
     }
 
-    func testSavedBreakTimeAddsToTheNextBreak() {
+    @Test mutating func savedBreakTimeAddsToTheNextBreak() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.resumeWork(deliverableID: nil), at: mon(9, 55))
         send(.startBreak(seconds: nil), at: mon(10, 25))
-        XCTAssertEqual(view(at: mon(10, 25)).breakRemainingSeconds!, 15 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10, 25)).breakRemainingSeconds!, 15 * minute))
     }
 
-    func testPartialBreakCountsDownTheChosenLength() {
+    @Test mutating func partialBreakCountsDownTheChosenLength() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: 3 * minute), at: mon(10))
-        XCTAssertEqual(view(at: mon(10)).breakRemainingSeconds!, 3 * minute, accuracy: 0.001)
-        XCTAssertEqual(lastEffects.first, .scheduleAlarm(at: mon(10, 3)))
+        #expect(near(view(at: mon(10)).breakRemainingSeconds!, 3 * minute))
+        #expect(lastEffects.first == .scheduleAlarm(at: mon(10, 3)))
     }
 
-    func testPartialBreakKeepsTheRestBanked() {
+    @Test mutating func partialBreakKeepsTheRestBanked() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: 3 * minute), at: mon(10))
         send(.resumeWork(deliverableID: nil), at: mon(10, 3))
-        XCTAssertEqual(view(at: mon(10, 3)).bankSeconds, 17 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10, 3)).bankSeconds, 17 * minute))
     }
 
-    func testPartialBreakCannotExceedTheBank() {
+    @Test mutating func partialBreakCannotExceedTheBank() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: 50 * minute), at: mon(9, 30))
-        XCTAssertEqual(view(at: mon(9, 30)).breakRemainingSeconds!, 10 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(9, 30)).breakRemainingSeconds!, 10 * minute))
     }
 
-    func testPartialBreakOptionsAreOnlyThoseTheBankCovers() {
+    @Test mutating func partialBreakOptionsAreOnlyThoseTheBankCovers() {
         send(.startWork(deliverableID: nil), at: mon(9))
-        XCTAssertEqual(view(at: mon(9, 5)).partialBreakOptions, [])
-        XCTAssertEqual(view(at: mon(9, 12)).partialBreakOptions, [180])
-        XCTAssertEqual(view(at: mon(9, 45)).partialBreakOptions, [180, 300, 600])
+        #expect(view(at: mon(9, 5)).partialBreakOptions == [])
+        #expect(view(at: mon(9, 12)).partialBreakOptions == [180])
+        #expect(view(at: mon(9, 45)).partialBreakOptions == [180, 300, 600])
     }
 
-    func testRatioChangeMidStintAppliesOnlyToLaterWork() {
+    @Test mutating func ratioChangeMidStintAppliesOnlyToLaterWork() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.setRatio(denominator: 6), at: mon(9, 30))
         // 30 min at 1/3 = 10 min, then 30 min at 1/6 = 5 min.
         send(.startBreak(seconds: nil), at: mon(10))
-        XCTAssertEqual(view(at: mon(10)).bankSeconds, 15 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10)).bankSeconds, 15 * minute))
     }
 
-    func testRatioChangeDoesNotAlterTimeAlreadyBanked() {
+    @Test mutating func ratioChangeDoesNotAlterTimeAlreadyBanked() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.setRatio(denominator: 6), at: mon(10))
-        XCTAssertEqual(view(at: mon(10)).bankSeconds, 20 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10)).bankSeconds, 20 * minute))
     }
 
     // MARK: End of break (stories 25-30)
 
-    func testAlarmIsScheduledForTheEndOfTheBreak() {
+    @Test mutating func alarmIsScheduledForTheEndOfTheBreak() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
-        XCTAssertTrue(lastEffects.contains(.scheduleAlarm(at: mon(10))))
+        #expect(lastEffects.contains(.scheduleAlarm(at: mon(10))))
     }
 
-    func testAlarmIsCancelledWhenWorkResumes() {
+    @Test mutating func alarmIsCancelledWhenWorkResumes() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.resumeWork(deliverableID: nil), at: mon(9, 50))
-        XCTAssertTrue(lastEffects.contains(.cancelAlarm))
+        #expect(lastEffects.contains(.cancelAlarm))
     }
 
-    func testOverrunIsShownInNeutralWords() {
+    @Test mutating func overrunIsShownInNeutralWords() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         let v = view(at: mon(10, 2, 5))
-        XCTAssertEqual(v.breakRemainingSeconds!, -(2 * minute + 5), accuracy: 0.001)
-        XCTAssertEqual(v.menuTitle, "🔵 Break · 2:05 past")
+        #expect(near(v.breakRemainingSeconds!, -(2 * minute + 5)))
+        #expect(v.menuTitle == "Break · 2:05 past")
     }
 
-    func testOverrunLeavesTheBankAtZeroWithNoDebt() {
+    @Test mutating func overrunLeavesTheBankAtZeroWithNoDebt() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
-        XCTAssertEqual(view(at: mon(10, 30)).bankSeconds, 0)
+        #expect(view(at: mon(10, 30)).bankSeconds == 0)
         send(.resumeWork(deliverableID: nil), at: mon(10, 30))
-        XCTAssertEqual(view(at: mon(10, 30)).bankSeconds, 0)
+        #expect(view(at: mon(10, 30)).bankSeconds == 0)
         // The next stint earns from zero, not from below it.
         send(.startBreak(seconds: nil), at: mon(11))
-        XCTAssertEqual(view(at: mon(11)).bankSeconds, 10 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(11)).bankSeconds, 10 * minute))
     }
 
-    func testOverrunIsRecordedAsBreakTime() {
+    @Test mutating func overrunIsRecordedAsBreakTime() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.resumeWork(deliverableID: nil), at: mon(10, 30))
-        XCTAssertEqual(view(at: mon(10, 30)).todayBreakSeconds, 45 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10, 30)).todayBreakSeconds, 45 * minute))
     }
 
-    func testAlarmIsRearmedAfterARestartDuringABreak() {
+    @Test mutating func alarmIsRearmedAfterARestartDuringABreak() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.launch, at: mon(9, 50))
-        XCTAssertEqual(lastEffects, [.scheduleAlarm(at: mon(10))])
+        #expect(lastEffects == [.scheduleAlarm(at: mon(10))])
     }
 
-    func testAlarmDoesNotFireTwice() {
+    @Test mutating func alarmDoesNotFireTwice() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.alarmFired, at: mon(10))
         send(.launch, at: mon(10, 5))
-        XCTAssertEqual(lastEffects, [])
+        #expect(lastEffects == [])
     }
 
     // MARK: Deliverables and hours invested (stories 31-36, 43-46)
 
-    func testDeliverableNeedsOnlyANameAndADeadline() {
+    @Test mutating func deliverableNeedsOnlyANameAndADeadline() {
         addReport()
         let v = view(at: mon(9))
-        XCTAssertEqual(v.activeDeliverables.map(\.name), ["Report"])
-        XCTAssertEqual(v.activeDeliverables[0].deadline, mon(17, day: 13))
-        XCTAssertEqual(v.activeDeliverables[0].investedSeconds, 0)
+        #expect(v.activeDeliverables.map(\.name) == ["Report"])
+        #expect(v.activeDeliverables[0].deadline == mon(17, day: 13))
+        #expect(v.activeDeliverables[0].investedSeconds == 0)
     }
 
-    func testDeliverableWithoutANameIsRefused() {
+    @Test mutating func deliverableWithoutANameIsRefused() {
         send(.addDeliverable(id: report, name: "   ", deadline: mon(17)), at: mon(8))
-        XCTAssertEqual(view(at: mon(9)).activeDeliverables, [])
+        #expect(view(at: mon(9)).activeDeliverables == [])
     }
 
-    func testWorkIsAttributedToTheChosenDeliverable() {
+    @Test mutating func workIsAttributedToTheChosenDeliverable() {
         addReport()
         send(.addDeliverable(id: slides, name: "Slides", deadline: mon(17, day: 12)), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.resumeWork(deliverableID: slides), at: mon(10, 20))
         let v = view(at: mon(10, 50))
-        XCTAssertEqual(v.activeDeliverables[0].investedSeconds, hour)
-        XCTAssertEqual(v.activeDeliverables[1].investedSeconds, 30 * minute)
-        XCTAssertEqual(v.currentDeliverableName, "Slides")
+        #expect(v.activeDeliverables[0].investedSeconds == hour)
+        #expect(v.activeDeliverables[1].investedSeconds == 30 * minute)
+        #expect(v.currentDeliverableName == "Slides")
     }
 
-    func testLastUsedDeliverableIsPreselected() {
+    @Test mutating func lastUsedDeliverableIsPreselected() {
         addReport()
         send(.addDeliverable(id: slides, name: "Slides", deadline: mon(17, day: 12)), at: mon(8))
-        XCTAssertNil(view(at: mon(9)).preselectedDeliverableID)
+        #expect(view(at: mon(9)).preselectedDeliverableID == nil)
         send(.startWork(deliverableID: slides), at: mon(9))
         send(.resetSession, at: mon(9, 30))
-        XCTAssertEqual(view(at: mon(9, 30)).preselectedDeliverableID, slides)
+        #expect(view(at: mon(9, 30)).preselectedDeliverableID == slides)
     }
 
-    func testStintWithoutADeliverableIsTimed() {
+    @Test mutating func stintWithoutADeliverableIsTimed() {
         addReport()
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         let v = view(at: mon(10))
-        XCTAssertEqual(v.todayWorkSeconds, hour)
-        XCTAssertEqual(v.activeDeliverables[0].investedSeconds, 0)
+        #expect(v.todayWorkSeconds == hour)
+        #expect(v.activeDeliverables[0].investedSeconds == 0)
     }
 
-    func testEditingADeliverable() {
+    @Test mutating func editingADeliverable() {
         addReport()
         send(.editDeliverable(id: report, name: "Board report", deadline: mon(12, day: 12)), at: mon(9))
         let d = view(at: mon(9)).activeDeliverables[0]
-        XCTAssertEqual(d.name, "Board report")
-        XCTAssertEqual(d.deadline, mon(12, day: 12))
+        #expect(d.name == "Board report")
+        #expect(d.deadline == mon(12, day: 12))
     }
 
-    func testCompletedDeliverableLeavesTheActiveListAndKeepsItsHours() {
+    @Test mutating func completedDeliverableLeavesTheActiveListAndKeepsItsHours() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(11))
         send(.completeDeliverable(id: report), at: mon(11))
         let v = view(at: mon(11))
-        XCTAssertEqual(v.activeDeliverables, [])
-        XCTAssertEqual(v.doneDeliverables.map(\.name), ["Report"])
-        XCTAssertEqual(v.doneDeliverables[0].investedSeconds, 2 * hour)
-        XCTAssertNil(v.preselectedDeliverableID)
+        #expect(v.activeDeliverables == [])
+        #expect(v.doneDeliverables.map(\.name) == ["Report"])
+        #expect(v.doneDeliverables[0].investedSeconds == 2 * hour)
+        #expect(v.preselectedDeliverableID == nil)
     }
 
     // MARK: Runway (stories 37-42)
 
-    func testRunwayIsWorkingHoursTimesTheWorkingShare() {
+    @Test mutating func runwayIsWorkingHoursTimesTheWorkingShare() {
         // Monday 09:00 to Friday 17:00 at 8 hours a day is 40 working hours; 75% of it is work.
         addReport()
-        XCTAssertEqual(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 30 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 30 * hour))
     }
 
-    func testRunwayIgnoresTimeOutsideWorkingHoursAndDaysOff() {
+    @Test mutating func runwayIgnoresTimeOutsideWorkingHoursAndDaysOff() {
         // Deadline the following Monday 13:00: the weekend adds nothing.
         addReport(deadline: mon(13, day: 16))
-        XCTAssertEqual(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 33 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 33 * hour))
         // In the evening only the coming days count.
-        XCTAssertEqual(view(at: mon(20)).activeDeliverables[0].runwaySeconds, 27 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(20)).activeDeliverables[0].runwaySeconds, 27 * hour))
     }
 
-    func testAnHourOfWorkLowersRunwayByAnHour() {
+    @Test mutating func anHourOfWorkLowersRunwayByAnHour() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
-        XCTAssertEqual(view(at: mon(10)).activeDeliverables[0].runwaySeconds, 29 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(10)).activeDeliverables[0].runwaySeconds, 29 * hour))
     }
 
-    func testAnEarnedBreakLeavesRunwayUnchanged() {
+    @Test mutating func anEarnedBreakLeavesRunwayUnchanged() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
@@ -361,79 +362,79 @@ final class EngineTests: XCTestCase {
         let midway = view(at: mon(10, 10)).activeDeliverables[0].runwaySeconds
         send(.resumeWork(deliverableID: report), at: mon(10, 20))
         let atEnd = view(at: mon(10, 20)).activeDeliverables[0].runwaySeconds
-        XCTAssertEqual(atStart, 29 * hour, accuracy: 0.001)
-        XCTAssertEqual(midway, atStart, accuracy: 0.001)
-        XCTAssertEqual(atEnd, atStart, accuracy: 0.001)
+        #expect(near(atStart, 29 * hour))
+        #expect(near(midway, atStart))
+        #expect(near(atEnd, atStart))
     }
 
-    func testAnOverrunDoesLowerRunway() {
+    @Test mutating func anOverrunDoesLowerRunway() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         // 20 earned minutes, then 40 more: those 40 minutes cost 30 minutes of work time.
-        XCTAssertEqual(view(at: mon(11)).activeDeliverables[0].runwaySeconds, 28.5 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(11)).activeDeliverables[0].runwaySeconds, 28.5 * hour))
     }
 
-    func testATighterRatioRaisesRunway() {
+    @Test mutating func aTighterRatioRaisesRunway() {
         addReport()
         send(.setRatio(denominator: 6), at: mon(9))
-        XCTAssertEqual(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 40 * hour * 6 / 7, accuracy: 0.001)
+        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 40 * hour * 6 / 7))
     }
 
-    func testRunwayFollowsADeadlineChange() {
+    @Test mutating func runwayFollowsADeadlineChange() {
         addReport()
         send(.editDeliverable(id: report, name: "Report", deadline: mon(17, day: 11)), at: mon(9))
-        XCTAssertEqual(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 18 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(9)).activeDeliverables[0].runwaySeconds, 18 * hour))
     }
 
-    func testRunwayFollowsWorkingHours() {
+    @Test mutating func runwayFollowsWorkingHours() {
         addReport()
         var hours = EngineState.defaultWorkingHours
         hours[5] = DayHours(enabled: false, startMinute: 0, endMinute: 0)      // Friday off
         hours[1] = DayHours(enabled: true, startMinute: 8 * 60, endMinute: 18 * 60) // Monday 08-18
         send(.setWorkingHours(hours), at: mon(8))
         // Monday 10h + Tue, Wed, Thu 8h each = 34h; 75% is 25.5h.
-        XCTAssertEqual(view(at: mon(8)).activeDeliverables[0].runwaySeconds, 25.5 * hour, accuracy: 0.001)
+        #expect(near(view(at: mon(8)).activeDeliverables[0].runwaySeconds, 25.5 * hour))
     }
 
-    func testRunwayIsZeroOnceTheDeadlineHasPassed() {
+    @Test mutating func runwayIsZeroOnceTheDeadlineHasPassed() {
         addReport(deadline: mon(12))
-        XCTAssertEqual(view(at: mon(13)).activeDeliverables[0].runwaySeconds, 0)
+        #expect(view(at: mon(13)).activeDeliverables[0].runwaySeconds == 0)
         send(.startWork(deliverableID: report), at: mon(13))
-        XCTAssertEqual(view(at: mon(15)).activeDeliverables[0].runwaySeconds, 0)
+        #expect(view(at: mon(15)).activeDeliverables[0].runwaySeconds == 0)
     }
 
     // MARK: Checkpoints (stories 47-51)
 
-    func testStartingABreakAsksForACheckpoint() {
+    @Test mutating func startingABreakAsksForACheckpoint() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
-        XCTAssertTrue(lastEffects.contains(.askCheckpoint))
-        XCTAssertTrue(view(at: mon(10)).awaitingCheckpoint)
+        #expect(lastEffects.contains(.askCheckpoint))
+        #expect(view(at: mon(10)).awaitingCheckpoint)
     }
 
-    func testCheckpointCanBeSkipped() {
+    @Test mutating func checkpointCanBeSkipped() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.resumeWork(deliverableID: nil), at: mon(10, 10))
-        XCTAssertEqual(view(at: mon(10, 10)).mode, .working)
-        XCTAssertEqual(state.checkpoints, [])
-        XCTAssertNil(view(at: mon(10, 10)).returnInfo)
+        #expect(view(at: mon(10, 10)).mode == .working)
+        #expect(state.checkpoints == [])
+        #expect(view(at: mon(10, 10)).returnInfo == nil)
     }
 
-    func testCheckpointIsShownOnReturn() {
+    @Test mutating func checkpointIsShownOnReturn() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.recordCheckpoint("Intro done,\nsection 2 half drafted "), at: mon(10, 1))
-        XCTAssertFalse(view(at: mon(10, 1)).awaitingCheckpoint)
+        #expect(!view(at: mon(10, 1)).awaitingCheckpoint)
         send(.resumeWork(deliverableID: report), at: mon(10, 15))
         let expected = ReturnInfo(checkpoint: "Intro done, section 2 half drafted", handoff: nil)
-        XCTAssertTrue(lastEffects.contains(.showReturn(expected)))
-        XCTAssertEqual(view(at: mon(10, 15)).returnInfo, expected)
+        #expect(lastEffects.contains(.showReturn(expected)))
+        #expect(view(at: mon(10, 15)).returnInfo == expected)
     }
 
-    func testCheckpointsFormALogPerDeliverable() {
+    @Test mutating func checkpointsFormALogPerDeliverable() {
         addReport()
         send(.addDeliverable(id: slides, name: "Slides", deadline: mon(17, day: 12)), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
@@ -447,88 +448,85 @@ final class EngineTests: XCTestCase {
         send(.recordCheckpoint("Section 2 drafted"), at: mon(12))
 
         let v = view(at: mon(12))
-        XCTAssertEqual(v.activeDeliverables[0].checkpoints.map(\.text), ["Intro done", "Section 2 drafted"])
-        XCTAssertEqual(v.activeDeliverables[1].checkpoints.map(\.text), ["Outline agreed"])
-        XCTAssertEqual(
-            engine.checkpointLog(state, deliverableID: report),
-            "2026-11-09 10:00  Intro done\n2026-11-09 12:00  Section 2 drafted"
-        )
+        #expect(v.activeDeliverables[0].checkpoints.map(\.text) == ["Intro done", "Section 2 drafted"])
+        #expect(v.activeDeliverables[1].checkpoints.map(\.text) == ["Outline agreed"])
+        #expect(engine.checkpointLog(state, deliverableID: report) == "2026-11-09 10:00  Intro done\n2026-11-09 12:00  Section 2 drafted")
     }
 
-    func testASecondCheckpointInTheSameBreakReplacesTheFirst() {
+    @Test mutating func aSecondCheckpointInTheSameBreakReplacesTheFirst() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.recordCheckpoint("First try"), at: mon(10))
         send(.recordCheckpoint("Better wording"), at: mon(10, 1))
-        XCTAssertEqual(state.checkpoints.map(\.text), ["Better wording"])
+        #expect(state.checkpoints.map(\.text) == ["Better wording"])
     }
 
-    func testStartingTheDayShowsTheLastCheckpointOfThatDeliverable() {
+    @Test mutating func startingTheDayShowsTheLastCheckpointOfThatDeliverable() {
         addReport()
         send(.startWork(deliverableID: report), at: mon(15))
         send(.startBreak(seconds: nil), at: mon(16))
         send(.recordCheckpoint("Tables still missing"), at: mon(16))
         send(.resetSession, at: mon(16, 30))
         send(.startWork(deliverableID: report), at: mon(9, day: 10))
-        XCTAssertEqual(view(at: mon(9, day: 10)).returnInfo?.checkpoint, "Tables still missing")
+        #expect(view(at: mon(9, day: 10)).returnInfo?.checkpoint == "Tables still missing")
     }
 
     // MARK: Hand-off (stories 52-56)
 
-    func testStartingABreakAsksForAHandoff() {
+    @Test mutating func startingABreakAsksForAHandoff() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
-        XCTAssertTrue(lastEffects.contains(.askHandoff))
-        XCTAssertTrue(view(at: mon(10)).awaitingHandoff)
+        #expect(lastEffects.contains(.askHandoff))
+        #expect(view(at: mon(10)).awaitingHandoff)
     }
 
-    func testHandoffNoteIsShownOnReturn() {
+    @Test mutating func handoffNoteIsShownOnReturn() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.recordHandoff("Claude: check the figures in section 3"), at: mon(10))
-        XCTAssertFalse(view(at: mon(10)).awaitingHandoff)
+        #expect(!view(at: mon(10)).awaitingHandoff)
         send(.resumeWork(deliverableID: nil), at: mon(10, 15))
-        XCTAssertEqual(view(at: mon(10, 15)).returnInfo?.handoff, "Claude: check the figures in section 3")
+        #expect(view(at: mon(10, 15)).returnInfo?.handoff == "Claude: check the figures in section 3")
     }
 
-    func testHandoffCanBeSkipped() {
+    @Test mutating func handoffCanBeSkipped() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.resumeWork(deliverableID: nil), at: mon(10, 15))
-        XCTAssertEqual(view(at: mon(10, 15)).mode, .working)
-        XCTAssertNil(view(at: mon(10, 15)).returnInfo)
+        #expect(view(at: mon(10, 15)).mode == .working)
+        #expect(view(at: mon(10, 15)).returnInfo == nil)
     }
 
-    func testHandoffPromptCanBeTurnedOff() {
+    @Test mutating func handoffPromptCanBeTurnedOff() {
         send(.setHandoffPrompt(false), at: mon(8))
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
-        XCTAssertFalse(lastEffects.contains(.askHandoff))
-        XCTAssertFalse(view(at: mon(10)).awaitingHandoff)
-        XCTAssertTrue(lastEffects.contains(.askCheckpoint))
+        #expect(!lastEffects.contains(.askHandoff))
+        #expect(!view(at: mon(10)).awaitingHandoff)
+        #expect(lastEffects.contains(.askCheckpoint))
     }
 
-    func testReturnInfoIsClearedWhenTheNextBreakStarts() {
+    @Test mutating func returnInfoIsClearedWhenTheNextBreakStarts() {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(10))
         send(.recordHandoff("Something"), at: mon(10))
         send(.resumeWork(deliverableID: nil), at: mon(10, 15))
         send(.startBreak(seconds: nil), at: mon(11))
-        XCTAssertNil(view(at: mon(11)).returnInfo)
+        #expect(view(at: mon(11)).returnInfo == nil)
     }
 
     // MARK: Persistence and the day (stories 10-11, 24, 57-60)
 
-    func testEveryChangeAsksForASave() {
+    @Test mutating func everyChangeAsksForASave() {
         send(.startWork(deliverableID: nil), at: mon(9))
-        XCTAssertTrue(lastEffects.contains(.save))
+        #expect(lastEffects.contains(.save))
         send(.startBreak(seconds: nil), at: mon(10))
-        XCTAssertTrue(lastEffects.contains(.save))
+        #expect(lastEffects.contains(.save))
         send(.setRatio(denominator: 4), at: mon(10))
-        XCTAssertTrue(lastEffects.contains(.save))
+        #expect(lastEffects.contains(.save))
     }
 
-    func testARunningStintContinuesAfterARestart() throws {
+    @Test mutating func aRunningStintContinuesAfterARestart() throws {
         addReport()
         send(.setRatio(denominator: 4), at: mon(8))
         send(.startWork(deliverableID: report), at: mon(9))
@@ -537,15 +535,15 @@ final class EngineTests: XCTestCase {
         state = try Persistence.decode(data)
         send(.launch, at: mon(9, 40))
         let v = view(at: mon(9, 40))
-        XCTAssertEqual(v.mode, .working)
-        XCTAssertEqual(v.elapsedSeconds, 40 * minute)
-        XCTAssertEqual(v.menuTitle, "🟢 Report · 40m")
-        XCTAssertEqual(v.ratioDenominator, 4)
+        #expect(v.mode == .working)
+        #expect(v.elapsedSeconds == 40 * minute)
+        #expect(v.menuTitle == "Report · 40m")
+        #expect(v.ratioDenominator == 4)
         send(.startBreak(seconds: nil), at: mon(10))
-        XCTAssertEqual(view(at: mon(10)).bankSeconds, 15 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10)).bankSeconds, 15 * minute))
     }
 
-    func testARunningBreakContinuesAfterARestart() throws {
+    @Test mutating func aRunningBreakContinuesAfterARestart() throws {
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 45))
         send(.recordCheckpoint("Half way"), at: mon(9, 46))
@@ -553,28 +551,28 @@ final class EngineTests: XCTestCase {
 
         state = try Persistence.decode(data)
         send(.launch, at: mon(9, 52))
-        XCTAssertEqual(lastEffects, [.scheduleAlarm(at: mon(10))])
-        XCTAssertEqual(view(at: mon(9, 52)).breakRemainingSeconds!, 8 * minute, accuracy: 0.001)
+        #expect(lastEffects == [.scheduleAlarm(at: mon(10))])
+        #expect(near(view(at: mon(9, 52)).breakRemainingSeconds!, 8 * minute))
         send(.resumeWork(deliverableID: nil), at: mon(9, 55))
-        XCTAssertEqual(view(at: mon(9, 55)).bankSeconds, 5 * minute, accuracy: 0.001)
-        XCTAssertEqual(view(at: mon(9, 55)).returnInfo?.checkpoint, "Half way")
+        #expect(near(view(at: mon(9, 55)).bankSeconds, 5 * minute))
+        #expect(view(at: mon(9, 55)).returnInfo?.checkpoint == "Half way")
     }
 
-    func testSavedStateRoundTripsExactly() throws {
+    @Test mutating func savedStateRoundTripsExactly() throws {
         addReport()
         send(.startWork(deliverableID: report), at: mon(9))
         send(.startBreak(seconds: 5 * minute), at: mon(9, 47, 13))
         send(.recordHandoff("Something"), at: mon(9, 48))
-        XCTAssertEqual(try Persistence.decode(Persistence.encode(state)), state)
+        #expect(try Persistence.decode(Persistence.encode(state)) == state)
     }
 
-    func testStateFromANewerVersionIsRefused() throws {
+    @Test mutating func stateFromANewerVersionIsRefused() throws {
         state.version = EngineState.currentVersion + 1
         let data = try Persistence.encode(state)
-        XCTAssertThrowsError(try Persistence.decode(data))
+        #expect(throws: (any Error).self) { try Persistence.decode(data) }
     }
 
-    func testTodayTotalsCountOnlyToday() {
+    @Test mutating func todayTotalsCountOnlyToday() {
         send(.startWork(deliverableID: nil), at: mon(15))
         send(.startBreak(seconds: nil), at: mon(16))
         send(.resumeWork(deliverableID: nil), at: mon(16, 20))
@@ -582,35 +580,117 @@ final class EngineTests: XCTestCase {
         // Tuesday.
         send(.startWork(deliverableID: nil), at: mon(9, day: 10))
         let v = view(at: mon(9, 30, day: 10))
-        XCTAssertEqual(v.todayWorkSeconds, 30 * minute)
-        XCTAssertEqual(v.todayBreakSeconds, 0)
+        #expect(v.todayWorkSeconds == 30 * minute)
+        #expect(v.todayBreakSeconds == 0)
         let monday = view(at: mon(17))
-        XCTAssertEqual(monday.todayWorkSeconds, 100 * minute)
-        XCTAssertEqual(monday.todayBreakSeconds, 20 * minute)
+        #expect(monday.todayWorkSeconds == 100 * minute)
+        #expect(monday.todayBreakSeconds == 20 * minute)
     }
 
-    func testLaunchAtLoginSettingIsPassedToTheSystem() {
+    @Test mutating func launchAtLoginSettingIsPassedToTheSystem() {
         send(.setLaunchAtLogin(true), at: mon(9))
-        XCTAssertTrue(lastEffects.contains(.setLaunchAtLogin(true)))
-        XCTAssertTrue(state.settings.launchAtLogin)
+        #expect(lastEffects.contains(.setLaunchAtLogin(true)))
+        #expect(state.settings.launchAtLogin)
         send(.setLaunchAtLogin(false), at: mon(9))
-        XCTAssertTrue(lastEffects.contains(.setLaunchAtLogin(false)))
+        #expect(lastEffects.contains(.setLaunchAtLogin(false)))
     }
 
     // MARK: The article's own examples
 
-    func testArticleExamples() {
+    @Test mutating func articleExamples() {
         // "After 15 minutes of dealing with emails, you could stop for up to 5 minutes."
         send(.startWork(deliverableID: nil), at: mon(9))
         send(.startBreak(seconds: nil), at: mon(9, 15))
-        XCTAssertEqual(view(at: mon(9, 15)).bankSeconds, 5 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(9, 15)).bankSeconds, 5 * minute))
         send(.resumeWork(deliverableID: nil), at: mon(9, 20))
         // "After an hour-long meeting, you can take a good 20-minute break."
         send(.startBreak(seconds: nil), at: mon(10, 20))
-        XCTAssertEqual(view(at: mon(10, 20)).bankSeconds, 20 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(10, 20)).bankSeconds, 20 * minute))
         // "If you end a break 5 minutes early, add 5 minutes to your next break."
         send(.resumeWork(deliverableID: nil), at: mon(10, 35))
         send(.startBreak(seconds: nil), at: mon(11, 20))
-        XCTAssertEqual(view(at: mon(11, 20)).bankSeconds, 20 * minute, accuracy: 0.001)
+        #expect(near(view(at: mon(11, 20)).bankSeconds, 20 * minute))
+    }
+
+    // MARK: Worst-case data
+
+    @Test mutating func aLongDeliverableNameIsCutShortInTheMenuBar() {
+        let name = "Aleksandra Wiśniewska-Kowalczyk: Q3 board report for Northwind Industries Holdings"
+        send(.addDeliverable(id: report, name: name, deadline: mon(17, day: 13)), at: mon(8))
+        send(.startWork(deliverableID: report), at: mon(9))
+        let v = view(at: mon(9, 34))
+        #expect(v.menuTitle == "Aleksandra Wiśniewska-K… · 34m")
+        // The panel still has the whole name.
+        #expect(v.currentDeliverableName == name)
+    }
+
+    @Test mutating func aNameAtTheMenuBarLimitIsShownWhole() {
+        let name = String(repeating: "x", count: Engine.menuNameLimit)
+        send(.addDeliverable(id: report, name: name, deadline: mon(17, day: 13)), at: mon(8))
+        send(.startWork(deliverableID: report), at: mon(9))
+        #expect(view(at: mon(9, 1)).menuTitle == "\(name) · 1m")
+    }
+
+    @Test mutating func aOneLetterNameWorks() {
+        send(.addDeliverable(id: report, name: "X", deadline: mon(17, day: 13)), at: mon(8))
+        send(.startWork(deliverableID: report), at: mon(9))
+        #expect(view(at: mon(9, 1)).menuTitle == "X · 1m")
+    }
+
+    @Test mutating func namesAndNotesHaveALengthLimit() {
+        let long = String(repeating: "word ", count: 100)
+        send(.addDeliverable(id: report, name: long, deadline: mon(17, day: 13)), at: mon(8))
+        #expect(view(at: mon(8)).activeDeliverables[0].name.count <= Engine.nameLimit)
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        send(.recordCheckpoint(long), at: mon(10))
+        send(.recordHandoff(long), at: mon(10))
+        #expect(state.checkpoints[0].text.count <= Engine.noteLimit)
+        #expect((state.currentBreak?.handoff?.count ?? 0) <= Engine.noteLimit)
+    }
+
+    @Test mutating func aPassedDeadlineIsFlagged() {
+        addReport(deadline: mon(12))
+        #expect(!view(at: mon(11)).activeDeliverables[0].deadlinePassed)
+        #expect(view(at: mon(13)).activeDeliverables[0].deadlinePassed)
+    }
+
+    @Test mutating func aStintLeftRunningOvernightStillReadsCorrectly() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        let v = view(at: mon(11, 14, 9, day: 10))
+        #expect(v.menuTitle == "Working · 26h 14m")
+        #expect(Format.clock(v.elapsedSeconds) == "26:14:09")
+    }
+
+    // MARK: Saved state from the first version
+
+    @Test mutating func stateSavedByTheFirstVersionIsMigrated() throws {
+        let start = mon(9).timeIntervalSinceReferenceDate
+        let json = """
+        {
+          "version": 1, "mode": "working", "ratioDenominator": 4, "bankSeconds": 300,
+          "stint": { "start": \(start), "earnedSeconds": 0, "earnAnchor": \(start) },
+          "deliverables": [], "workLog": [], "breakLog": [], "checkpoints": [],
+          "workingHours": [
+            {"enabled": false, "startMinute": 540, "endMinute": 1020},
+            {"enabled": true, "startMinute": 540, "endMinute": 1020},
+            {"enabled": true, "startMinute": 540, "endMinute": 1020},
+            {"enabled": true, "startMinute": 540, "endMinute": 1020},
+            {"enabled": true, "startMinute": 540, "endMinute": 1020},
+            {"enabled": true, "startMinute": 540, "endMinute": 1020},
+            {"enabled": false, "startMinute": 540, "endMinute": 1020}
+          ],
+          "settings": { "handoffPrompt": false, "launchAtLogin": true }
+        }
+        """
+        state = try Persistence.decode(Data(json.utf8))
+        #expect(state.version == EngineState.currentVersion)
+        let v = view(at: mon(9, 40))
+        #expect(v.mode == .working)
+        #expect(v.elapsedSeconds == 40 * minute)
+        #expect(v.ratioDenominator == 4)
+        // 5 minutes banked plus 40 minutes at 1/4.
+        #expect(near(v.bankSeconds, 15 * minute))
+        #expect(!state.settings.handoffPrompt)
     }
 }

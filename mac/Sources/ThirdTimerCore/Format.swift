@@ -33,10 +33,56 @@ public enum Persistence {
     }
 
     public static func decode(_ data: Data) throws -> EngineState {
-        let state = try JSONDecoder().decode(EngineState.self, from: data)
-        if state.version > EngineState.currentVersion {
-            throw Failure.newerVersion(state.version)
+        let decoder = JSONDecoder()
+        let version = try decoder.decode(VersionProbe.self, from: data).version
+        if version > EngineState.currentVersion {
+            throw Failure.newerVersion(version)
         }
-        return state
+        if version == 1 {
+            return try decoder.decode(StateV1.self, from: data).migrated()
+        }
+        return try decoder.decode(EngineState.self, from: data)
+    }
+
+    private struct VersionProbe: Decodable {
+        var version: Int
+    }
+
+    /// The first saved format, which kept the mode, the stint and the break
+    /// as three separate fields.
+    private struct StateV1: Decodable {
+        var mode: Mode
+        var ratioDenominator: Int
+        var bankSeconds: Double
+        var stint: Stint?
+        var currentBreak: BreakSession?
+        var deliverables: [Deliverable]
+        var lastDeliverableID: UUID?
+        var workLog: [WorkEntry]
+        var breakLog: [BreakEntry]
+        var checkpoints: [Checkpoint]
+        var workingHours: [DayHours]
+        var settings: Settings
+        var returnInfo: ReturnInfo?
+
+        func migrated() -> EngineState {
+            var state = EngineState()
+            switch (mode, stint, currentBreak) {
+            case (.working, let stint?, _): state.session = .working(stint)
+            case (.breaking, _, let current?): state.session = .breaking(current)
+            default: state.session = .idle
+            }
+            state.ratioDenominator = ratioDenominator
+            state.bankSeconds = bankSeconds
+            state.deliverables = deliverables
+            state.lastDeliverableID = lastDeliverableID
+            state.workLog = workLog
+            state.breakLog = breakLog
+            state.checkpoints = checkpoints
+            state.workingHours = workingHours
+            state.settings = settings
+            state.returnInfo = returnInfo
+            return state
+        }
     }
 }

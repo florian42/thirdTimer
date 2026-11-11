@@ -78,17 +78,23 @@ public struct Settings: Codable, Equatable, Sendable {
     public var launchAtLogin: Bool = false
 }
 
+/// What the user is doing right now. One case at a time, so a stint and a
+/// break can never exist together.
+public enum Session: Codable, Equatable, Sendable {
+    case idle
+    case working(Stint)
+    case breaking(BreakSession)
+}
+
 public struct EngineState: Codable, Equatable, Sendable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public var version: Int = EngineState.currentVersion
-    public var mode: Mode = .idle
+    public var session: Session = .idle
     /// The break ratio is 1 / ratioDenominator. Allowed: 2...6.
     public var ratioDenominator: Int = 3
     /// Banked break time. While on a break this is the bank at the start of the break.
     public var bankSeconds: Double = 0
-    public var stint: Stint?
-    public var currentBreak: BreakSession?
     public var deliverables: [Deliverable] = []
     public var lastDeliverableID: UUID?
     public var workLog: [WorkEntry] = []
@@ -106,6 +112,22 @@ public struct EngineState: Codable, Equatable, Sendable {
     }
 
     public var ratio: Double { 1.0 / Double(ratioDenominator) }
+
+    public var mode: Mode {
+        switch session {
+        case .idle: .idle
+        case .working: .working
+        case .breaking: .breaking
+        }
+    }
+
+    public var stint: Stint? {
+        if case .working(let stint) = session { stint } else { nil }
+    }
+
+    public var currentBreak: BreakSession? {
+        if case .breaking(let current) = session { current } else { nil }
+    }
 }
 
 public enum Event: Equatable, Sendable {

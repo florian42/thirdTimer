@@ -2,6 +2,18 @@ import AppKit
 import SwiftUI
 import ThirdTimerCore
 
+/// Spacing comes from one scale, so every gap is a deliberate choice:
+/// tight inside a group, wide between groups.
+private enum Space {
+    static let xs: CGFloat = 4
+    static let s: CGFloat = 8
+    static let m: CGFloat = 12
+    static let l: CGFloat = 16
+    static let xl: CGFloat = 24
+}
+
+private let cornerRadius: CGFloat = 8
+
 /// The panel that opens from the menu bar item.
 struct PanelView: View {
     @EnvironmentObject private var model: AppModel
@@ -10,94 +22,145 @@ struct PanelView: View {
     @State private var checkpointText = ""
     @State private var handoffText = ""
     @State private var newName = ""
-    @State private var newDeadline = Date().addingTimeInterval(3 * 86400)
+    @State private var newDeadline = PanelView.defaultDeadline()
     @State private var editingID: UUID?
     @State private var editName = ""
     @State private var editDeadline = Date()
+    @State private var copiedID: UUID?
+    @State private var confirmingReset = false
 
     var body: some View {
         let snap = model.snapshot
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: Space.xl) {
                 if let problem = model.loadProblem {
-                    Text(problem).font(.caption).foregroundColor(.secondary)
+                    Text(problem).font(.caption).foregroundStyle(.secondary)
                 }
                 timerSection(snap)
-                Divider()
                 ratioSection(snap)
-                Divider()
                 deliverablesSection(snap)
-                Divider()
                 todaySection(snap)
                 SettingsSection()
-                Divider()
-                footer
+                footer(snap)
             }
-            .padding(16)
+            .padding(Space.l)
         }
         // A fixed size: a scroll view has no height of its own, so without
         // one the panel collapses to nothing.
         .frame(width: 360, height: 560)
-        .onAppear { selectedDeliverable = snap.currentDeliverableID ?? snap.preselectedDeliverableID }
+        .onAppear {
+            selectedDeliverable = snap.currentDeliverableID ?? snap.preselectedDeliverableID
+            // Don't open with the cursor in a text field: Return should trigger the main action.
+            DispatchQueue.main.async { NSApp.keyWindow?.makeFirstResponder(nil) }
+        }
+    }
+
+    /// Three days ahead at the end of the working day, not at the current minute.
+    private static func defaultDeadline() -> Date {
+        let day = Date().addingTimeInterval(3 * 86400)
+        return Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: day) ?? day
     }
 
     // MARK: Timer
 
-    @ViewBuilder
     private func timerSection(_ snap: Snapshot) -> some View {
-        switch snap.mode {
-        case .idle:
-            Text("Ready to start").font(.headline)
-            deliverablePicker(snap)
-            Button("Start working") {
-                model.send(.startWork(deliverableID: selectedDeliverable))
-            }
-            .keyboardShortcut(.defaultAction)
-            if snap.bankSeconds >= 1 {
-                Text("Break time banked: \(Format.short(snap.bankSeconds))")
-                    .font(.callout).foregroundColor(.secondary)
-            }
+        VStack(alignment: .leading, spacing: Space.m) {
+            switch snap.mode {
+            case .idle:
+                Text("Ready to start").font(.title3.weight(.semibold))
+                deliverablePicker(snap)
+                primaryButton("Start working") {
+                    model.send(.startWork(deliverableID: selectedDeliverable))
+                }
+                if snap.bankSeconds >= 60 {
+                    secondary("\(Format.short(snap.bankSeconds)) of break banked")
+                }
 
-        case .working:
-            Text("Working on \(snap.currentDeliverableName ?? "no deliverable")").font(.headline)
-            Text(Format.clock(snap.elapsedSeconds))
-                .font(.system(size: 40, weight: .medium, design: .monospaced))
-            Text("Break time earned: \(Format.clock(snap.bankSeconds))")
-                .font(.callout).foregroundColor(.secondary)
-            if let info = snap.returnInfo {
-                returnInfoBox(info)
-            }
-            Button("Take a break (\(Format.short(snap.bankSeconds)))") {
-                startBreak(nil)
-            }
-            .keyboardShortcut(.defaultAction)
-            if !snap.partialBreakOptions.isEmpty {
-                HStack {
-                    Text("Or just:").foregroundColor(.secondary)
-                    ForEach(snap.partialBreakOptions, id: \.self) { seconds in
-                        Button("\(Int(seconds / 60)) min") { startBreak(seconds) }
+            case .working:
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    secondary("Working on")
+                    Text(snap.currentDeliverableName ?? "No deliverable")
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
+                }
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    clock(snap.elapsedSeconds)
+                    secondary("\(Format.clock(snap.bankSeconds)) of break earned").monospacedDigit()
+                }
+                if let info = snap.returnInfo {
+                    returnInfoBox(info)
+                }
+                primaryButton("Take a break · \(Format.short(snap.bankSeconds))") {
+                    startBreak(nil)
+                }
+                if !snap.partialBreakOptions.isEmpty {
+                    HStack(spacing: Space.s) {
+                        secondary("Or take just")
+                        ForEach(snap.partialBreakOptions, id: \.self) { seconds in
+                            Button("\(Int(seconds / 60)) min") { startBreak(seconds) }
+                        }
                     }
                 }
-            }
 
-        case .breaking:
-            let remaining = snap.breakRemainingSeconds ?? 0
-            Text("On a break").font(.headline)
-            Text(Format.clock(abs(remaining)))
-                .font(.system(size: 40, weight: .medium, design: .monospaced))
-            Text(remaining >= 0 ? "left of this break" : "past the end of this break")
-                .font(.callout).foregroundColor(.secondary)
-            if snap.bankSeconds >= 1 {
-                Text("Still banked: \(Format.short(snap.bankSeconds))")
-                    .font(.callout).foregroundColor(.secondary)
+            case .breaking:
+                let remaining = snap.breakRemainingSeconds ?? 0
+                Text("On a break").font(.title3.weight(.semibold))
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    clock(abs(remaining))
+                    secondary(remaining >= 0 ? "left of this break" : "past the end of this break")
+                    if let note = breakBudgetNote(snap, remaining: remaining) {
+                        secondary(note)
+                    }
+                }
+                breakNotes(snap)
+                deliverablePicker(snap)
+                primaryButton("Resume work") {
+                    model.send(.resumeWork(deliverableID: selectedDeliverable))
+                }
             }
-            breakNotes(snap)
-            deliverablePicker(snap)
-            Button("Resume work") {
-                model.send(.resumeWork(deliverableID: selectedDeliverable))
-            }
-            .keyboardShortcut(.defaultAction)
         }
+    }
+
+    /// Answers "can I afford this break?" while the break is still inside what was earned.
+    private func breakBudgetNote(_ snap: Snapshot, remaining: Double) -> String? {
+        guard remaining >= 0 else { return nil }
+        var parts: [String] = []
+        let staysBanked = snap.bankSeconds - remaining
+        if staysBanked >= 60 {
+            parts.append("\(Format.short(staysBanked)) more stays banked.")
+        }
+        if let current = snap.activeDeliverables.first(where: { $0.id == snap.currentDeliverableID }),
+           !current.deadlinePassed {
+            parts.append("This break is budgeted: \(Format.short(current.runwaySeconds)) of work time still left.")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    private func clock(_ seconds: Double) -> some View {
+        Text(Format.clock(seconds))
+            .font(.system(size: 48, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .tracking(-1)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+    }
+
+    private func secondary(_ text: String) -> Text {
+        Text(text).font(.callout).foregroundColor(.secondary)
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+    }
+
+    /// The one main action of each state: solid, large and full width.
+    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .keyboardShortcut(.defaultAction)
     }
 
     private func startBreak(_ seconds: Double?) {
@@ -108,58 +171,70 @@ struct PanelView: View {
 
     @ViewBuilder
     private func breakNotes(_ snap: Snapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if snap.awaitingCheckpoint {
-                Text("Where did you leave off? (optional)").font(.callout)
-                HStack {
-                    TextField("One line on the state of the work", text: $checkpointText)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { saveCheckpoint() }
-                    Button("Save") { saveCheckpoint() }
-                        .disabled(checkpointText.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            } else if let text = model.state.currentBreak?.checkpoint {
-                Text("Checkpoint: \(text)").font(.callout)
+        if snap.awaitingCheckpoint {
+            noteField(
+                label: "Where did you leave off?",
+                placeholder: "One line on the state of the work",
+                text: $checkpointText
+            ) {
+                model.send(.recordCheckpoint(checkpointText))
+                checkpointText = ""
             }
-            if snap.awaitingHandoff {
-                Text("Anything Claude can work on while you're away? (optional)").font(.callout)
-                HStack {
-                    TextField("What you handed off", text: $handoffText)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { saveHandoff() }
-                    Button("Save") { saveHandoff() }
-                        .disabled(handoffText.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            } else if let text = model.state.currentBreak?.handoff {
-                Text("Handed off: \(text)").font(.callout)
+        } else if let text = model.state.currentBreak?.checkpoint {
+            savedNote(label: "Where you left off", text: text)
+        }
+        if snap.awaitingHandoff {
+            noteField(
+                label: "Hand off to Claude",
+                placeholder: "What can it work on while you're away?",
+                text: $handoffText
+            ) {
+                model.send(.recordHandoff(handoffText))
+                handoffText = ""
+            }
+        } else if let text = model.state.currentBreak?.handoff {
+            savedNote(label: "Handed off", text: text)
+        }
+    }
+
+    private func noteField(
+        label: String, placeholder: String, text: Binding<String>, save: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            HStack(spacing: Space.xs) {
+                Text(label).font(.callout)
+                Text("Optional").font(.callout).foregroundStyle(.tertiary)
+            }
+            HStack(spacing: Space.s) {
+                TextField(placeholder, text: text)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(save)
+                Button("Save", action: save)
+                    .disabled(text.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
     }
 
-    private func saveCheckpoint() {
-        model.send(.recordCheckpoint(checkpointText))
-        checkpointText = ""
-    }
-
-    private func saveHandoff() {
-        model.send(.recordHandoff(handoffText))
-        handoffText = ""
+    private func savedNote(label: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(text).font(.callout).lineLimit(3)
+        }
     }
 
     private func returnInfoBox(_ info: ReturnInfo) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Space.s) {
             if let checkpoint = info.checkpoint {
-                Text("Where you left off: \(checkpoint)")
+                savedNote(label: "Where you left off", text: checkpoint)
             }
             if let handoff = info.handoff {
-                Text("Handed off: \(handoff)")
+                savedNote(label: "Handed off", text: handoff)
             }
         }
-        .font(.callout)
-        .padding(8)
+        .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.12))
-        .cornerRadius(6)
+        .background(Color.accentColor.opacity(0.1))
+        .cornerRadius(cornerRadius)
     }
 
     private func deliverablePicker(_ snap: Snapshot) -> some View {
@@ -174,8 +249,8 @@ struct PanelView: View {
     // MARK: Ratio
 
     private func ratioSection(_ snap: Snapshot) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Break ratio").font(.headline)
+        VStack(alignment: .leading, spacing: Space.s) {
+            sectionTitle("Break ratio")
             Picker("Break ratio", selection: Binding(
                 get: { snap.ratioDenominator },
                 set: { model.send(.setRatio(denominator: $0)) }
@@ -186,95 +261,130 @@ struct PanelView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            Text("A change applies to work from now on. Break time already earned stays.")
-                .font(.caption).foregroundColor(.secondary)
+            Text("An hour of work earns \(60 / snap.ratioDenominator) min of break. A change applies from now on.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
     // MARK: Deliverables
 
-    @ViewBuilder
     private func deliverablesSection(_ snap: Snapshot) -> some View {
-        Text("Deliverables").font(.headline)
-        if snap.activeDeliverables.isEmpty {
-            Text("None yet. Add one below.").font(.callout).foregroundColor(.secondary)
-        }
-        ForEach(snap.activeDeliverables) { d in
-            if editingID == d.id {
-                editRow(d)
-            } else {
-                deliverableRow(d)
+        VStack(alignment: .leading, spacing: Space.s) {
+            sectionTitle("Deliverables")
+            if snap.activeDeliverables.isEmpty {
+                secondary("Add what you have to deliver and when. Third Timer then shows how much work time is left.")
             }
-        }
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("New deliverable", text: $newName)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                DatePicker("Due", selection: $newDeadline)
-                Button("Add") {
-                    model.send(.addDeliverable(id: UUID(), name: newName, deadline: newDeadline))
-                    newName = ""
+            ForEach(snap.activeDeliverables) { d in
+                if editingID == d.id {
+                    editRow(d)
+                } else {
+                    deliverableRow(d)
                 }
-                .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-        }
-        if !snap.doneDeliverables.isEmpty {
-            DisclosureGroup("Done (\(snap.doneDeliverables.count))") {
-                ForEach(snap.doneDeliverables) { d in
-                    HStack {
-                        Text(d.name)
-                        Spacer()
-                        Text(Format.short(d.investedSeconds)).foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: Space.s) {
+                TextField("New deliverable", text: $newName)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addDeliverable)
+                HStack(spacing: Space.s) {
+                    Text("Due").font(.callout).foregroundStyle(.secondary)
+                    DatePicker("Due", selection: $newDeadline).labelsHidden()
+                    Spacer()
+                    Button("Add", action: addDeliverable)
+                        .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(.top, Space.xs)
+            if !snap.doneDeliverables.isEmpty {
+                DisclosureGroup("Done (\(snap.doneDeliverables.count))") {
+                    ForEach(snap.doneDeliverables) { d in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(d.name).lineLimit(2)
+                            Spacer()
+                            Text(Format.short(d.investedSeconds)).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .font(.callout)
                     }
-                    .font(.callout)
                 }
+                .font(.callout)
             }
         }
     }
 
+    private func addDeliverable() {
+        guard !newName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        model.send(.addDeliverable(id: UUID(), name: newName, deadline: newDeadline))
+        newName = ""
+    }
+
     private func deliverableRow(_ d: DeliverableView) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(d.name).fontWeight(.medium)
-            Text("Due \(d.deadline.formatted(date: .abbreviated, time: .shortened))")
-                .font(.callout).foregroundColor(.secondary)
-            Text("Work time left: \(Format.short(d.runwaySeconds)) · Invested: \(Format.short(d.investedSeconds))")
-                .font(.callout)
+        VStack(alignment: .leading, spacing: Space.s) {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(d.name).fontWeight(.medium).lineLimit(2)
+                // The number that answers "can I afford a break?" leads; the rest is secondary.
+                if d.deadlinePassed {
+                    Text("Past its deadline").font(.callout)
+                } else {
+                    (Text(Format.short(d.runwaySeconds)).fontWeight(.semibold)
+                        + Text(" of work time left").foregroundColor(.secondary))
+                        .font(.callout)
+                        .monospacedDigit()
+                }
+                secondary("Due \(d.deadline.formatted(date: .abbreviated, time: .shortened)) · \(Format.short(d.investedSeconds)) invested")
+            }
             if !d.checkpoints.isEmpty {
                 DisclosureGroup("Checkpoints (\(d.checkpoints.count))") {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
                         ForEach(Array(d.checkpoints.enumerated()), id: \.offset) { _, c in
-                            Text("\(c.time.formatted(date: .abbreviated, time: .shortened))  \(c.text)")
-                                .font(.caption)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(c.time.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text(c.text).font(.callout)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
+                    .padding(.top, Space.xs)
                 }
                 .font(.callout)
             }
-            HStack {
+            // Row actions are quiet links: none of them is the main action of the panel.
+            HStack(spacing: Space.m) {
                 Button("Edit") {
                     editingID = d.id
                     editName = d.name
                     editDeadline = d.deadline
                 }
                 if !d.checkpoints.isEmpty {
-                    Button("Copy log") { model.copyCheckpointLog(for: d.id) }
+                    Button(copiedID == d.id ? "Copied" : "Copy log") { copyLog(d.id) }
                 }
-                Button("Done") { model.send(.completeDeliverable(id: d.id)) }
+                Button("Mark done") { model.send(.completeDeliverable(id: d.id)) }
             }
-            .controlSize(.small)
+            .buttonStyle(.link)
+            .font(.callout)
         }
-        .padding(8)
+        .padding(Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.08))
-        .cornerRadius(6)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(cornerRadius)
+    }
+
+    private func copyLog(_ id: UUID) {
+        model.copyCheckpointLog(for: id)
+        copiedID = id
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            if copiedID == id { copiedID = nil }
+        }
     }
 
     private func editRow(_ d: DeliverableView) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Space.s) {
             TextField("Name", text: $editName).textFieldStyle(.roundedBorder)
-            DatePicker("Due", selection: $editDeadline)
-            HStack {
+            HStack(spacing: Space.s) {
+                Text("Due").font(.callout).foregroundStyle(.secondary)
+                DatePicker("Due", selection: $editDeadline).labelsHidden()
+            }
+            HStack(spacing: Space.s) {
                 Button("Save") {
                     model.send(.editDeliverable(id: d.id, name: editName, deadline: editDeadline))
                     editingID = nil
@@ -282,31 +392,53 @@ struct PanelView: View {
                 .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button("Cancel") { editingID = nil }
             }
-            .controlSize(.small)
         }
-        .padding(8)
-        .background(Color.secondary.opacity(0.08))
-        .cornerRadius(6)
+        .padding(Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(cornerRadius)
     }
 
     // MARK: Today and footer
 
     private func todaySection(_ snap: Snapshot) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Today").font(.headline)
-            Text("Work: \(Format.short(snap.todayWorkSeconds)) · Breaks: \(Format.short(snap.todayBreakSeconds))")
+        VStack(alignment: .leading, spacing: Space.s) {
+            sectionTitle("Today")
+            Text("\(Format.short(snap.todayWorkSeconds)) worked · \(Format.short(snap.todayBreakSeconds)) on breaks")
                 .font(.callout)
+                .monospacedDigit()
         }
     }
 
-    private var footer: some View {
-        HStack {
-            Text("Hotkey: ⌃⌥T").font(.caption).foregroundColor(.secondary)
-            Spacer()
-            Button("Reset session") { model.send(.resetSession) }
-            Button("Quit") { NSApp.terminate(nil) }
+    @ViewBuilder
+    private func footer(_ snap: Snapshot) -> some View {
+        if confirmingReset {
+            // Reset throws away banked break time, so it asks first.
+            VStack(alignment: .leading, spacing: Space.s) {
+                Text(snap.bankSeconds >= 60
+                    ? "Stop the timer and clear \(Format.short(snap.bankSeconds)) of banked break time?"
+                    : "Stop the timer and start a fresh session?")
+                    .font(.callout)
+                secondary("Hours invested and checkpoints are kept.")
+                HStack(spacing: Space.s) {
+                    Button("Reset session", role: .destructive) {
+                        model.send(.resetSession)
+                        confirmingReset = false
+                    }
+                    Button("Cancel") { confirmingReset = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+            }
+        } else {
+            HStack(spacing: Space.m) {
+                Text("⌃⌥T starts, breaks and resumes").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Reset…") { confirmingReset = true }
+                Button("Quit") { NSApp.terminate(nil) }
+            }
+            .buttonStyle(.link)
+            .font(.callout)
         }
-        .controlSize(.small)
     }
 }
 
@@ -321,7 +453,7 @@ struct SettingsSection: View {
 
     var body: some View {
         DisclosureGroup("Settings") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: Space.s) {
                 Toggle("Ask what Claude can work on during a break", isOn: Binding(
                     get: { model.state.settings.handoffPrompt },
                     set: { model.send(.setHandoffPrompt($0)) }
@@ -330,28 +462,33 @@ struct SettingsSection: View {
                     get: { model.state.settings.launchAtLogin },
                     set: { model.send(.setLaunchAtLogin($0)) }
                 ))
-                Text("Working hours").fontWeight(.medium)
+                Text("Working hours").fontWeight(.medium).padding(.top, Space.s)
+                Text("Work time left is counted inside these hours.")
+                    .font(.caption).foregroundStyle(.secondary)
                 ForEach(SettingsSection.dayOrder, id: \.self) { index in
                     dayRow(index)
                 }
             }
             .font(.callout)
-            .padding(.top, 6)
+            .padding(.top, Space.s)
         }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.secondary)
     }
 
     private func dayRow(_ index: Int) -> some View {
         let day = model.state.workingHours[index]
-        return HStack {
+        return HStack(spacing: Space.s) {
             Toggle(SettingsSection.dayNames[index], isOn: Binding(
                 get: { day.enabled },
                 set: { newValue in change(index) { $0.enabled = newValue } }
             ))
-            .frame(width: 70, alignment: .leading)
+            .frame(width: 64, alignment: .leading)
             minutePicker(value: day.startMinute) { newValue in change(index) { $0.startMinute = newValue } }
             Text("to")
             minutePicker(value: day.endMinute) { newValue in change(index) { $0.endMinute = newValue } }
         }
+        .foregroundStyle(.primary)
     }
 
     private func change(_ index: Int, _ edit: (inout DayHours) -> Void) {

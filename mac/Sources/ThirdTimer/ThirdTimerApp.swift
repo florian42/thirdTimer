@@ -13,12 +13,28 @@ struct ThirdTimerApp: App {
             PanelView()
                 .environmentObject(model)
         } label: {
-            Text(model.snapshot.menuTitle)
+            // A system symbol and plain text, like other menu bar items. Digits keep
+            // one width, so the item does not shift its neighbours every second.
+            let snap = model.snapshot
+            HStack(spacing: 4) {
+                Image(systemName: ThirdTimerApp.symbol(for: snap.mode))
+                Text(snap.menuTitle).monospacedDigit()
+            }
         }
         .menuBarExtraStyle(.window)
     }
+
+    /// Each mode has its own shape, so the state never rests on colour alone.
+    private static func symbol(for mode: Mode) -> String {
+        switch mode {
+        case .idle: "pause.circle"
+        case .working: "timer"
+        case .breaking: "cup.and.saucer.fill"
+        }
+    }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var hotKey: HotKey?
     private var window: NSWindow?
@@ -27,31 +43,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Menu bar only: no Dock icon.
         NSApp.setActivationPolicy(.accessory)
 
-        hotKey = HotKey {
-            Task { @MainActor in AppModel.shared.toggle() }
-        }
+        hotKey = HotKey { AppModel.shared.toggle() }
 
         if AppModel.canNotify {
             UNUserNotificationCenter.current().delegate = self
         }
-        Task { @MainActor in AppModel.shared.requestNotificationPermission() }
+        AppModel.shared.requestNotificationPermission()
 
         // `--window` also shows the panel in an ordinary window, for screenshots and checks.
         if CommandLine.arguments.contains("--window") {
-            Task { @MainActor in self.showPanelWindow() }
+            showPanelWindow()
         }
     }
 
     // Show the end-of-break banner even while the panel is open.
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound])
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 
-    @MainActor
     private func showPanelWindow() {
         let host = NSHostingController(rootView: PanelView().environmentObject(AppModel.shared))
         let window = NSWindow(contentViewController: host)

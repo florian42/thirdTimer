@@ -3,13 +3,16 @@ import Foundation
 
 /// A system-wide hotkey. Uses the Carbon hotkey API, which needs no
 /// accessibility permission.
+@MainActor
 final class HotKey {
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
-    private static var action: (() -> Void)?
+    /// The Carbon callback is a plain C function and cannot capture anything,
+    /// so the action lives here. It is only ever touched on the main actor.
+    private static var action: (@MainActor () -> Void)?
 
     /// Control-Option-T.
-    init(action: @escaping () -> Void) {
+    init(action: @escaping @MainActor () -> Void) {
         HotKey.action = action
         var spec = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -18,7 +21,7 @@ final class HotKey {
         InstallEventHandler(
             GetApplicationEventTarget(),
             { _, _, _ in
-                DispatchQueue.main.async { HotKey.action?() }
+                Task { @MainActor in HotKey.action?() }
                 return noErr
             },
             1, &spec, nil, &handlerRef
@@ -32,10 +35,5 @@ final class HotKey {
             0,
             &hotKeyRef
         )
-    }
-
-    deinit {
-        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-        if let handlerRef { RemoveEventHandler(handlerRef) }
     }
 }

@@ -7,6 +7,8 @@ here="$(dirname "$0")"
 swift "$here/windows.swift" > "proof/$prefix-windows.txt"
 cat "proof/$prefix-windows.txt"
 grep -q " 25 " "proof/$prefix-windows.txt"   # the menu bar item exists
+# It must also be on screen: macOS pushes an item that is too wide off the menu bar.
+awk '$2 == 25 && $3 < 0 { print "menu bar item is off screen:", $0; bad = 1 } END { exit bad }' "proof/$prefix-windows.txt"
 while read -r id layer x y w h; do
   kind=window; [ "$layer" = "25" ] && kind=menubar
   screencapture -x -o -l "$id" "proof/$prefix-$kind.png"

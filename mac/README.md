@@ -16,7 +16,7 @@ git checkout claude/eloquent-gates-034sfi
 ```
 
 The script builds the app, copies it to `/Applications/ThirdTimer.app` and
-starts it. It appears in the menu bar as `⏸ Idle`. There is no Dock icon.
+starts it. It appears in the menu bar as `Idle` with a pause symbol. There is no Dock icon.
 
 To start it at every login, open the panel, then Settings, then turn on
 "Start at login".
@@ -27,8 +27,8 @@ To start it at every login, open the panel, then Settings, then turn on
   resume work.
 - Click the menu bar item for the panel: deliverables, partial breaks, the
   break ratio, checkpoints, the hand-off note, working hours.
-- The menu bar shows `🟢 Report · 34m` while you work and
-  `🔵 Break · 6:12 left` on a break.
+- The menu bar shows `Report · 34m` while you work and `Break · 6:12 left`
+  on a break, each with its own symbol.
 
 State is saved in `~/Library/Application Support/ThirdTimer/state.json`.
 
@@ -51,7 +51,7 @@ swift test          # engine tests (needs Xcode, not only the Command Line Tools
 Flags for checking the app by hand or in CI:
 
 - `--window` also shows the panel in an ordinary window.
-- `--demo working`, `--demo breaking` or `--demo ending` starts from a sample
-  session. This replaces the saved state, so set `THIRDTIMER_STATE_FILE` too.
+- `--demo working`, `breaking`, `ending`, `worst` or `idle` starts from a sample
+  session (`worst` is realistic worst-case data). This replaces the saved state, so set `THIRDTIMER_STATE_FILE` too.
 - `--print-title` prints the menu bar text once a second.
 - `THIRDTIMER_STATE_FILE=/path/state.json` uses a different state file.

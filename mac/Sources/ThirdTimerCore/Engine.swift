@@ -10,6 +10,11 @@ public struct Engine: Sendable {
     }
 
     public static let allowedDenominators = [2, 3, 4, 5, 6]
+    /// Longest deliverable name, and longest checkpoint or hand-off note, in characters.
+    public static let nameLimit = 120
+    public static let noteLimit = 280
+    /// Longest deliverable name shown in the menu bar before it is cut short.
+    public static let menuNameLimit = 24
 
     // MARK: - Reduce
 
@@ -33,24 +38,22 @@ public struct Engine: Sendable {
             s.bankSeconds += accrued(stint, ratio: s.ratio, now: now)
             s.workLog.append(WorkEntry(start: stint.start, end: now, deliverableID: stint.deliverableID))
             let allowance = min(max(0, seconds ?? s.bankSeconds), s.bankSeconds)
-            s.stint = nil
-            s.mode = .breaking
             s.returnInfo = nil
-            s.currentBreak = BreakSession(
+            s.session = .breaking(BreakSession(
                 start: now,
                 allowanceSeconds: allowance,
                 deliverableID: stint.deliverableID,
                 checkpoint: nil,
                 handoff: nil,
                 alarmFired: false
-            )
+            ))
             effects.append(.scheduleAlarm(at: now.addingTimeInterval(allowance)))
             effects.append(.askCheckpoint)
             if s.settings.handoffPrompt { effects.append(.askHandoff) }
 
         case .recordCheckpoint(let raw):
             guard s.mode == .breaking, var b = s.currentBreak else { return (state, []) }
-            let text = oneLine(raw)
+            let text = oneLine(raw, limit: Engine.noteLimit)
             guard !text.isEmpty else { return (state, []) }
             if b.checkpoint != nil, !s.checkpoints.isEmpty {
                 // A second checkpoint in the same break replaces the first.
@@ -59,14 +62,14 @@ public struct Engine: Sendable {
                 s.checkpoints.append(Checkpoint(time: now, text: text, deliverableID: b.deliverableID))
             }
             b.checkpoint = text
-            s.currentBreak = b
+            s.session = .breaking(b)
 
         case .recordHandoff(let raw):
             guard s.mode == .breaking, var b = s.currentBreak else { return (state, []) }
-            let text = oneLine(raw)
+            let text = oneLine(raw, limit: Engine.noteLimit)
             guard !text.isEmpty else { return (state, []) }
             b.handoff = text
-            s.currentBreak = b
+            s.session = .breaking(b)
 
         case .resumeWork(let deliverableID):
             guard s.mode == .breaking, let b = s.currentBreak else { return (state, []) }
@@ -74,14 +77,13 @@ public struct Engine: Sendable {
             // Debit card, not credit card: the bank never goes below zero.
             s.bankSeconds = max(0, s.bankSeconds - taken)
             s.breakLog.append(BreakEntry(start: b.start, end: now))
-            s.currentBreak = nil
             effects.append(.cancelAlarm)
             beginStint(&s, deliverableID: deliverableID, handoff: b.handoff, now: now, effects: &effects)
 
         case .alarmFired:
             guard s.mode == .breaking, var b = s.currentBreak, !b.alarmFired else { return (state, []) }
             b.alarmFired = true
-            s.currentBreak = b
+            s.session = .breaking(b)
 
         case .setRatio(let denominator):
             guard Engine.allowedDenominators.contains(denominator), denominator != s.ratioDenominator else {
@@ -91,17 +93,17 @@ public struct Engine: Sendable {
                 // Close the earning at the old ratio; the new ratio applies from now on.
                 stint.earnedSeconds = accrued(stint, ratio: s.ratio, now: now)
                 stint.earnAnchor = now
-                s.stint = stint
+                s.session = .working(stint)
             }
             s.ratioDenominator = denominator
 
         case .addDeliverable(let id, let rawName, let deadline):
-            let name = oneLine(rawName)
+            let name = oneLine(rawName, limit: Engine.nameLimit)
             guard !name.isEmpty, !s.deliverables.contains(where: { $0.id == id }) else { return (state, []) }
             s.deliverables.append(Deliverable(id: id, name: name, deadline: deadline, isDone: false, completedAt: nil))
 
         case .editDeliverable(let id, let rawName, let deadline):
-            let name = oneLine(rawName)
+            let name = oneLine(rawName, limit: Engine.nameLimit)
             guard !name.isEmpty, let index = s.deliverables.firstIndex(where: { $0.id == id }) else {
                 return (state, [])
             }
@@ -139,9 +141,7 @@ public struct Engine: Sendable {
                 s.breakLog.append(BreakEntry(start: b.start, end: now))
                 effects.append(.cancelAlarm)
             }
-            s.stint = nil
-            s.currentBreak = nil
-            s.mode = .idle
+            s.session = .idle
             s.bankSeconds = 0
             s.returnInfo = nil
         }
@@ -158,8 +158,7 @@ public struct Engine: Sendable {
         effects: inout [Effect]
     ) {
         let id = deliverableID.flatMap { id in s.deliverables.contains(where: { $0.id == id }) ? id : nil }
-        s.mode = .working
-        s.stint = Stint(start: now, deliverableID: id, earnedSeconds: 0, earnAnchor: now)
+        s.session = .working(Stint(start: now, deliverableID: id, earnedSeconds: 0, earnAnchor: now))
         if let id { s.lastDeliverableID = id }
         let lastCheckpoint = s.checkpoints.last(where: { $0.deliverableID == id })?.text
         if lastCheckpoint != nil || handoff != nil {
@@ -175,10 +174,11 @@ public struct Engine: Sendable {
         stint.earnedSeconds + max(0, now.timeIntervalSince(stint.earnAnchor)) * ratio
     }
 
-    private func oneLine(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isNewline })
+    private func oneLine(_ text: String, limit: Int) -> String {
+        let line = text.split(whereSeparator: { $0.isNewline })
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
+        return String(line.prefix(limit)).trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - Snapshot
@@ -210,12 +210,12 @@ public struct Engine: Sendable {
         let title: String
         switch state.mode {
         case .idle:
-            title = "⏸ Idle"
+            title = "Idle"
         case .working:
-            title = "🟢 \(currentName ?? "Working") · \(Format.short(elapsed))"
+            title = "\(menuName(currentName)) · \(Format.short(elapsed))"
         case .breaking:
             let r = remaining ?? 0
-            title = r >= 0 ? "🔵 Break · \(Format.clock(r)) left" : "🔵 Break · \(Format.clock(-r)) past"
+            title = r >= 0 ? "Break · \(Format.clock(r)) left" : "Break · \(Format.clock(-r)) past"
         }
 
         let views = state.deliverables.map { d in
@@ -224,6 +224,7 @@ public struct Engine: Sendable {
                 name: d.name,
                 deadline: d.deadline,
                 isDone: d.isDone,
+                deadlinePassed: d.deadline <= now,
                 investedSeconds: invested(state, deliverableID: d.id, now: now),
                 runwaySeconds: runway(state, deadline: d.deadline, liveBank: liveBank, now: now),
                 checkpoints: state.checkpoints.filter { $0.deliverableID == d.id }
@@ -261,6 +262,13 @@ public struct Engine: Sendable {
             partialBreakOptions: state.mode == .working
                 ? Engine.partialBreakLengths.filter { $0 < liveBank } : []
         )
+    }
+
+    /// The menu bar has little room: a long name is cut short so the timer stays visible.
+    private func menuName(_ name: String?) -> String {
+        guard let name else { return "Working" }
+        guard name.count > Engine.menuNameLimit else { return name }
+        return String(name.prefix(Engine.menuNameLimit - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     public static let partialBreakLengths: [Double] = [180, 300, 600]
@@ -350,6 +358,7 @@ public struct DeliverableView: Equatable, Identifiable, Sendable {
     public var name: String
     public var deadline: Date
     public var isDone: Bool
+    public var deadlinePassed: Bool
     public var investedSeconds: Double
     public var runwaySeconds: Double
     public var checkpoints: [Checkpoint]
