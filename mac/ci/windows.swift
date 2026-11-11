@@ -15,5 +15,5 @@ for window in list {
     func n(_ key: String) -> Int { (b[key] as? NSNumber)?.intValue ?? 0 }
     let line = "\(id) \(layer) \(n("X")) \(n("Y")) \(n("Width")) \(n("Height"))"
     FileHandle.standardError.write("  \(owner): \(line)\n".data(using: .utf8)!)
-    if owner.contains("ThirdTimer") { print(line) }
+    if owner.replacingOccurrences(of: " ", with: "").contains("ThirdTimer") { print(line) }
 }

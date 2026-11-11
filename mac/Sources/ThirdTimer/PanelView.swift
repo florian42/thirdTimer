@@ -35,8 +35,9 @@ struct PanelView: View {
             }
             .padding(16)
         }
-        .frame(width: 360)
-        .frame(maxHeight: 640)
+        // A fixed size: a scroll view has no height of its own, so without
+        // one the panel collapses to nothing.
+        .frame(width: 360, height: 560)
         .onAppear { selectedDeliverable = snap.currentDeliverableID ?? snap.preselectedDeliverableID }
     }
 
