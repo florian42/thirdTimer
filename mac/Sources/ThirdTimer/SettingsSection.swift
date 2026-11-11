@@ -7,6 +7,12 @@ struct SettingsSection: View {
 
     /// Lunchtimes offered, in minutes after midnight: 11:00 to 14:30.
     private static let lunchTimes = Array(stride(from: 11 * 60, through: 14 * 60 + 30, by: 30))
+    /// Times offered for the afternoon dip: 12:00 to 17:00.
+    private static let dipTimes = Array(stride(from: 12 * 60, through: 17 * 60, by: 30))
+
+    private static func clock(_ minute: Int) -> String {
+        String(format: "%02d:%02d", minute / 60, minute % 60)
+    }
 
     var body: some View {
         let rhythm = model.state.rhythm
@@ -55,7 +61,7 @@ struct SettingsSection: View {
                                 set: { value in change { $0.lunchMinuteOfDay = value } }
                             )) {
                                 ForEach(SettingsSection.lunchTimes, id: \.self) { minute in
-                                    Text(String(format: "%02d:%02d", minute / 60, minute % 60)).tag(minute)
+                                    Text(SettingsSection.clock(minute)).tag(minute)
                                 }
                             }
                             .labelsHidden()
@@ -66,6 +72,42 @@ struct SettingsSection: View {
                             ), in: 15...180, step: 15)
                         }
                         .padding(.leading, 20)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Toggle("Suggest a pause sooner in the afternoon dip", isOn: Binding(
+                        get: { model.state.rhythm.dipEnabled },
+                        set: { value in change { $0.dipEnabled = value } }
+                    ))
+                    if rhythm.dipEnabled {
+                        HStack(spacing: Space.s) {
+                            Picker("Dip starts", selection: Binding(
+                                get: { model.state.rhythm.dipStartMinute },
+                                set: { value in change { $0.dipStartMinute = value } }
+                            )) {
+                                ForEach(SettingsSection.dipTimes, id: \.self) { minute in
+                                    Text(SettingsSection.clock(minute)).tag(minute)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 80)
+                            Text("to")
+                            Picker("Dip ends", selection: Binding(
+                                get: { model.state.rhythm.dipEndMinute },
+                                set: { value in change { $0.dipEndMinute = value } }
+                            )) {
+                                ForEach(SettingsSection.dipTimes, id: \.self) { minute in
+                                    Text(SettingsSection.clock(minute)).tag(minute)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 80)
+                        }
+                        .padding(.leading, 20)
+                        Text("In these hours a pause is suggested after \(rhythm.dipNudgeMinutes) min, and a walk for the break.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.leading, 20)
                     }
                 }
 

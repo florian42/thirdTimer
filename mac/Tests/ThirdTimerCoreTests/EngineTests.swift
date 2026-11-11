@@ -799,4 +799,69 @@ struct EngineTests {
         send(.tick, at: mon(10))
         #expect(lastEffects.contains(.nudge(.pause)))
     }
+
+    // MARK: The afternoon dip
+
+    /// Lunch is suggested at the same hours, so these tests switch it off.
+    mutating func withoutLunch() {
+        var rhythm = Rhythm()
+        rhythm.lunchEnabled = false
+        send(.setRhythm(rhythm), at: mon(8))
+    }
+
+    @Test mutating func duringTheAfternoonDipAPauseIsSuggestedSooner() {
+        withoutLunch()
+        send(.startWork(deliverableID: nil), at: mon(13))
+        send(.tick, at: mon(13, 44))
+        #expect(lastEffects == [])
+        send(.tick, at: mon(13, 45))
+        #expect(lastEffects.contains(.nudge(.pause)))
+        #expect(view(at: mon(13, 45)).pauseAfterSeconds == 45 * minute)
+    }
+
+    @Test mutating func outsideTheDipTheUsualHourApplies() {
+        send(.startWork(deliverableID: nil), at: mon(15))
+        send(.tick, at: mon(15, 45))
+        #expect(lastEffects == [])
+        #expect(view(at: mon(15, 45)).pauseAfterSeconds == 60 * minute)
+        send(.tick, at: mon(16))
+        #expect(lastEffects.contains(.nudge(.pause)))
+    }
+
+    @Test mutating func theDipCanBeTurnedOffOrMoved() {
+        var rhythm = Rhythm()
+        rhythm.lunchEnabled = false
+        rhythm.dipEnabled = false
+        send(.setRhythm(rhythm), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(13))
+        send(.tick, at: mon(13, 45))
+        #expect(lastEffects == [])
+        rhythm.dipEnabled = true
+        rhythm.dipStartMinute = 15 * 60
+        rhythm.dipEndMinute = 16 * 60
+        send(.setRhythm(rhythm), at: mon(13, 46))
+        send(.tick, at: mon(13, 47))
+        #expect(lastEffects == [])
+    }
+
+    @Test mutating func aWalkIsSuggestedForBreaksAroundTheDip() {
+        send(.startWork(deliverableID: nil), at: mon(13))
+        send(.startBreak(seconds: nil), at: mon(14))
+        #expect(view(at: mon(14, 5)).movementSuggested)
+        send(.resumeWork(deliverableID: nil), at: mon(14, 10))
+        #expect(!view(at: mon(14, 11)).movementSuggested)
+        send(.startBreak(seconds: nil), at: mon(16))
+        #expect(!view(at: mon(16, 5)).movementSuggested)
+    }
+
+    @Test mutating func rhythmSettingsFromAnOlderVersionKeepTheirValuesAndGainDefaults() throws {
+        let json = #"{"nudgeEnabled":false,"firstNudgeMinutes":90,"lunchMinuteOfDay":750}"#
+        let rhythm = try JSONDecoder().decode(Rhythm.self, from: Data(json.utf8))
+        #expect(!rhythm.nudgeEnabled)
+        #expect(rhythm.firstNudgeMinutes == 90)
+        #expect(rhythm.lunchMinuteOfDay == 750)
+        #expect(rhythm.dipEnabled)
+        #expect(rhythm.dipNudgeMinutes == 45)
+        #expect(rhythm.bellEnabled)
+    }
 }

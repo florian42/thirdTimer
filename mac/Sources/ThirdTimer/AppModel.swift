@@ -27,7 +27,8 @@ final class AppModel: ObservableObject {
     private let launchedAt = Date()
     /// A suggestion waiting for a quiet moment, and the latest it may wait until.
     private var pendingNudge: (nudge: Nudge, latest: Date)?
-    private var bellPlayers: [Int: AVAudioPlayer] = [:]
+    /// Two players, so the second strike can start while the first still rings.
+    private var bellPlayers: [AVAudioPlayer] = []
 
     var snapshot: Snapshot { engine.snapshot(state, now: now) }
 
@@ -186,12 +187,31 @@ final class AppModel: ObservableObject {
             fflush(stdout)
         }
         guard state.rhythm.bellEnabled else { return }
-        if bellPlayers[strikes] == nil {
-            bellPlayers[strikes] = try? AVAudioPlayer(data: Bell.wav(strikes: strikes))
+        if bellPlayers.isEmpty, let url = AppModel.bellURL {
+            bellPlayers = (0..<2).compactMap { _ in try? AVAudioPlayer(contentsOf: url) }
         }
-        guard let player = bellPlayers[strikes] else { return }
-        player.currentTime = 0
-        player.play()
+        guard let first = bellPlayers.first else {
+            // No recording in the bundle: fall back to a quiet system sound.
+            NSSound(named: "Tink")?.play()
+            return
+        }
+        first.currentTime = 0
+        first.play()
+        if strikes > 1, bellPlayers.count > 1 {
+            let second = bellPlayers[1]
+            second.currentTime = 0
+            second.play(atTime: second.deviceCurrentTime + AppModel.secondStrikeDelay)
+        }
+    }
+
+    private static let secondStrikeDelay = 2.5
+
+    /// The bell recording that the build script copies into the app bundle.
+    private static var bellURL: URL? {
+        for ext in ["m4a", "wav", "mp3", "aiff"] {
+            if let url = Bundle.main.url(forResource: "bell", withExtension: ext) { return url }
+        }
+        return nil
     }
 
     private func notify(title: String, body: String) {

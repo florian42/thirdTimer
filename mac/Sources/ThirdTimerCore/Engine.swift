@@ -37,10 +37,10 @@ public struct Engine: Sendable {
             if lunchIsDue(s, now: now), log.lunchSuggestedOn != calendar.startOfDay(for: now) {
                 log.lunchSuggestedOn = calendar.startOfDay(for: now)
                 // Lunch replaces a pause suggestion that would fall at the same moment.
-                log.nudgesThisStint = max(log.nudgesThisStint, nudgesDue(rhythm, elapsed: elapsed))
+                log.nudgesThisStint = max(log.nudgesThisStint, nudgesDue(rhythm, elapsed: elapsed, now: now))
                 effects.append(.nudge(.lunch))
             } else if rhythm.nudgeEnabled {
-                let due = nudgesDue(rhythm, elapsed: elapsed)
+                let due = nudgesDue(rhythm, elapsed: elapsed, now: now)
                 if due > log.nudgesThisStint {
                     // After a long gap (the Mac was asleep) only one suggestion is made.
                     log.nudgesThisStint = due
@@ -157,7 +157,7 @@ public struct Engine: Sendable {
             if lunchIsDue(s, now: now) {
                 log.lunchDismissedOn = calendar.startOfDay(for: now)
             } else {
-                log.dismissedNudges = max(1, nudgesDue(s.rhythm, elapsed: now.timeIntervalSince(stint.start)))
+                log.dismissedNudges = max(1, nudgesDue(s.rhythm, elapsed: now.timeIntervalSince(stint.start), now: now))
             }
             s.nudgeLog = log
 
@@ -167,6 +167,9 @@ public struct Engine: Sendable {
             r.repeatNudgeMinutes = min(max(r.repeatNudgeMinutes, 10), 120)
             r.lunchMinuteOfDay = min(max(r.lunchMinuteOfDay, 0), 24 * 60 - 1)
             r.lunchLengthMinutes = min(max(r.lunchLengthMinutes, 15), 180)
+            r.dipStartMinute = min(max(r.dipStartMinute, 0), 24 * 60 - 1)
+            r.dipEndMinute = min(max(r.dipEndMinute, r.dipStartMinute), 24 * 60)
+            r.dipNudgeMinutes = min(max(r.dipNudgeMinutes, 15), 180)
             s.rhythm = r
 
         case .setHandoffPrompt(let on):
@@ -219,10 +222,29 @@ public struct Engine: Sendable {
     }
 
     /// How many pause suggestions should have been made after this much unbroken work.
-    private func nudgesDue(_ rhythm: Rhythm, elapsed: Double) -> Int {
-        let first = Double(rhythm.firstNudgeMinutes) * 60
+    /// During the afternoon dip the first one comes sooner.
+    private func nudgesDue(_ rhythm: Rhythm, elapsed: Double, now: Date) -> Int {
+        var firstMinutes = rhythm.firstNudgeMinutes
+        if rhythm.dipEnabled, minuteOfDay(now) >= Double(rhythm.dipStartMinute),
+           minuteOfDay(now) < Double(rhythm.dipEndMinute) {
+            firstMinutes = min(firstMinutes, rhythm.dipNudgeMinutes)
+        }
+        let first = Double(firstMinutes) * 60
         guard elapsed >= first else { return 0 }
         return 1 + Int((elapsed - first) / (Double(rhythm.repeatNudgeMinutes) * 60))
+    }
+
+    private func minuteOfDay(_ date: Date) -> Double {
+        date.timeIntervalSince(calendar.startOfDay(for: date)) / 60
+    }
+
+    /// A walk does the most good around the afternoon dip.
+    private func movementSuggested(_ state: EngineState, now: Date) -> Bool {
+        let rhythm = state.rhythm
+        guard rhythm.dipEnabled, state.mode == .breaking else { return false }
+        let minute = minuteOfDay(now)
+        return minute >= Double(rhythm.dipStartMinute)
+            && minute < Double(rhythm.dipEndMinute + Rhythm.movementTailMinutes)
     }
 
     /// Lunch is suggested while working, from lunchtime for a while after, until lunch is taken.
@@ -231,7 +253,7 @@ public struct Engine: Sendable {
         guard rhythm.lunchEnabled, state.mode == .working else { return false }
         let day = calendar.startOfDay(for: now)
         guard state.nudgeLog.lunchTakenOn != day, state.nudgeLog.lunchDismissedOn != day else { return false }
-        let minutes = now.timeIntervalSince(day) / 60
+        let minutes = minuteOfDay(now)
         let start = Double(rhythm.lunchMinuteOfDay)
         return minutes >= start && minutes < start + Double(Rhythm.lunchWindowMinutes)
     }
@@ -324,6 +346,8 @@ public struct Engine: Sendable {
                 && state.currentBreak?.handoff == nil,
             suggestion: suggestion(state, elapsed: elapsed, now: now),
             isLunchBreak: state.currentBreak?.isMeal == true,
+            movementSuggested: movementSuggested(state, now: now),
+            pauseAfterSeconds: pauseAfter(state, now: now),
             partialBreakOptions: state.mode == .working
                 ? Engine.partialBreakLengths.filter { $0 < liveBank } : []
         )
@@ -341,9 +365,21 @@ public struct Engine: Sendable {
         guard state.mode == .working else { return nil }
         if lunchIsDue(state, now: now) { return .lunch }
         let rhythm = state.rhythm
-        let due = nudgesDue(rhythm, elapsed: elapsed)
+        let due = nudgesDue(rhythm, elapsed: elapsed, now: now)
         if rhythm.nudgeEnabled, due > 0, due > state.nudgeLog.dismissedNudges { return .pause }
         return nil
+    }
+
+    /// How much unbroken work leads to the first pause suggestion right now, if any.
+    private func pauseAfter(_ state: EngineState, now: Date) -> Double? {
+        let rhythm = state.rhythm
+        guard rhythm.nudgeEnabled else { return nil }
+        var minutes = rhythm.firstNudgeMinutes
+        if rhythm.dipEnabled, minuteOfDay(now) >= Double(rhythm.dipStartMinute),
+           minuteOfDay(now) < Double(rhythm.dipEndMinute) {
+            minutes = min(minutes, rhythm.dipNudgeMinutes)
+        }
+        return Double(minutes) * 60
     }
 
     public static let partialBreakLengths: [Double] = [180, 300, 600]
@@ -422,6 +458,10 @@ public struct Snapshot: Equatable, Sendable {
     /// Set while a break would be a good idea; the panel and menu bar show it calmly.
     public var suggestion: Nudge?
     public var isLunchBreak: Bool
+    /// On a break around the afternoon dip, when a walk helps most.
+    public var movementSuggested: Bool
+    /// Unbroken work after which a pause is first suggested; nil when suggestions are off.
+    public var pauseAfterSeconds: Double?
     /// Partial break lengths, in seconds, that the bank can cover.
     public var partialBreakOptions: [Double]
 }

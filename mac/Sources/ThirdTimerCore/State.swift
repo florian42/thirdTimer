@@ -72,13 +72,38 @@ public struct Rhythm: Codable, Equatable, Sendable {
     public var lunchEnabled = true
     public var lunchMinuteOfDay = 12 * 60
     public var lunchLengthMinutes = 60
+    /// The early-afternoon dip in energy: suggest a pause sooner, and a walk.
+    public var dipEnabled = true
+    public var dipStartMinute = 13 * 60
+    public var dipEndMinute = 14 * 60 + 30
+    public var dipNudgeMinutes = 45
     /// Ring the bell with a suggestion and at the end of a break.
     public var bellEnabled = true
 
     public init() {}
 
+    /// Every field falls back to its default, so settings saved by an older
+    /// version that lacked a field still load.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Rhythm()
+        nudgeEnabled = try c.decodeIfPresent(Bool.self, forKey: .nudgeEnabled) ?? d.nudgeEnabled
+        firstNudgeMinutes = try c.decodeIfPresent(Int.self, forKey: .firstNudgeMinutes) ?? d.firstNudgeMinutes
+        repeatNudgeMinutes = try c.decodeIfPresent(Int.self, forKey: .repeatNudgeMinutes) ?? d.repeatNudgeMinutes
+        lunchEnabled = try c.decodeIfPresent(Bool.self, forKey: .lunchEnabled) ?? d.lunchEnabled
+        lunchMinuteOfDay = try c.decodeIfPresent(Int.self, forKey: .lunchMinuteOfDay) ?? d.lunchMinuteOfDay
+        lunchLengthMinutes = try c.decodeIfPresent(Int.self, forKey: .lunchLengthMinutes) ?? d.lunchLengthMinutes
+        dipEnabled = try c.decodeIfPresent(Bool.self, forKey: .dipEnabled) ?? d.dipEnabled
+        dipStartMinute = try c.decodeIfPresent(Int.self, forKey: .dipStartMinute) ?? d.dipStartMinute
+        dipEndMinute = try c.decodeIfPresent(Int.self, forKey: .dipEndMinute) ?? d.dipEndMinute
+        dipNudgeMinutes = try c.decodeIfPresent(Int.self, forKey: .dipNudgeMinutes) ?? d.dipNudgeMinutes
+        bellEnabled = try c.decodeIfPresent(Bool.self, forKey: .bellEnabled) ?? d.bellEnabled
+    }
+
     /// How long after lunchtime a lunch suggestion still makes sense.
     public static let lunchWindowMinutes = 120
+    /// A walk is suggested for breaks during the dip and for this long after it.
+    public static let movementTailMinutes = 60
 }
 
 /// What has already been suggested, so nothing is suggested twice.

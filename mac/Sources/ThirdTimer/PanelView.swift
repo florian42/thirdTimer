@@ -168,9 +168,8 @@ struct PanelView: View {
         case .idle:
             return nil
         case .working:
-            let rhythm = model.state.rhythm
-            guard rhythm.nudgeEnabled else { return nil }
-            return min(1, snap.elapsedSeconds / (Double(rhythm.firstNudgeMinutes) * 60))
+            guard let pauseAfter = snap.pauseAfterSeconds, pauseAfter > 0 else { return nil }
+            return min(1, snap.elapsedSeconds / pauseAfter)
         case .breaking:
             let remaining = max(0, snap.breakRemainingSeconds ?? 0)
             let total = remaining + snap.elapsedSeconds
@@ -223,12 +222,7 @@ struct PanelView: View {
             }
 
         case .breaking:
-            Label(
-                snap.isLunchBreak
-                    ? "Away from the desk if you can."
-                    : "Step away from the screen. A short walk or a look out of the window does the most good.",
-                systemImage: "figure.walk"
-            )
+            Label(breakTip(snap), systemImage: snap.movementSuggested ? "figure.walk" : "eye")
             .font(.callout)
             .foregroundStyle(.secondary)
             breakNotes(snap)
@@ -237,6 +231,14 @@ struct PanelView: View {
                 model.send(.resumeWork(deliverableID: selectedDeliverable))
             }
         }
+    }
+
+    private func breakTip(_ snap: Snapshot) -> String {
+        if snap.isLunchBreak { return "Away from the desk if you can." }
+        if snap.movementSuggested {
+            return "Energy dips around now. A short walk lifts it more than the screen does."
+        }
+        return "Step away from the screen. Look out of the window, stretch, get some water."
     }
 
     private var notNowButton: some View {
