@@ -25,6 +25,9 @@ struct Mood {
     static func of(_ snap: Snapshot) -> Mood {
         switch snap.mode {
         case .idle:
+            if snap.pausedByMeeting {
+                return Mood(tint: .indigo, symbol: "person.2.fill", title: "In a meeting")
+            }
             return snap.isPaused
                 ? Mood(tint: .indigo, symbol: "pause.circle.fill", title: "Paused")
                 : Mood(tint: .secondary, symbol: "pause.circle", title: "Ready when you are")
@@ -122,9 +125,10 @@ struct PanelView: View {
         case .idle:
             if snap.isPaused {
                 clock(snap.elapsedSeconds)
-                secondary(snap.bankSeconds >= 60
-                    ? "Nothing is counted and the bell stays quiet. \(Format.short(snap.bankSeconds)) of break is kept."
-                    : "Nothing is counted and the bell stays quiet.")
+                let kept = snap.bankSeconds >= 60 ? " \(Format.short(snap.bankSeconds)) of break is kept." : ""
+                secondary(snap.pausedByMeeting
+                    ? "Paused by your calendar. Work starts again when the meeting ends.\(kept)"
+                    : "Nothing is counted and the bell stays quiet.\(kept)")
             } else if snap.bankSeconds >= 60 {
                 secondary("\(Format.short(snap.bankSeconds)) of break banked")
             } else {

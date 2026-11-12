@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 import ThirdTimerCore
 import UserNotifications
@@ -36,6 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.setActivationPolicy(.accessory)
 
         hotKey = HotKey { AppModel.shared.toggle() }
+        Logger(subsystem: "app.thirdtimer.ThirdTimer", category: "app")
+            .notice("\(self.hotKey?.status ?? "", privacy: .public)")
+        if CommandLine.arguments.contains("--print-title") {
+            print(hotKey?.status ?? "")
+            fflush(stdout)
+        }
 
         if AppModel.canNotify {
             UNUserNotificationCenter.current().delegate = self

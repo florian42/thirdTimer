@@ -193,6 +193,86 @@ struct EngineTests {
         #expect(view(at: mon(10, 30)).menuTitle == "Paused · 30m")
     }
 
+    // MARK: Meetings from the calendar
+
+    @Test mutating func aMeetingPausesWorkAndWorkStartsAgainWhenItEnds() {
+        addReport()
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.meeting(true), at: mon(10))
+        let during = view(at: mon(10, 30))
+        #expect(during.pausedByMeeting)
+        #expect(during.menuTitle == "Meeting · 30m")
+        #expect(near(during.bankSeconds, 20 * minute))
+        send(.meeting(false), at: mon(11))
+        let after = view(at: mon(11, 10))
+        #expect(after.mode == .working)
+        #expect(after.currentDeliverableID == report)
+        #expect(after.elapsedSeconds == 10 * minute)
+        #expect(after.todayWorkSeconds == 70 * minute)
+        #expect(after.todayBreakSeconds == 0)
+    }
+
+    @Test mutating func nothingRingsDuringAMeeting() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.meeting(true), at: mon(9, 55))
+        for minutes in stride(from: 0, through: 180, by: 5) {
+            let time = mon(9, 55).addingTimeInterval(Double(minutes) * minute)
+            send(.meeting(true), at: time)
+            send(.tick, at: time)
+            #expect(lastEffects.isEmpty)
+        }
+    }
+
+    @Test mutating func aMeetingDuringABreakCancelsTheBellAndWorkFollows() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        send(.meeting(true), at: mon(10, 5))
+        #expect(lastEffects.contains(.cancelAlarm))
+        send(.meeting(false), at: mon(11))
+        let v = view(at: mon(11))
+        #expect(v.mode == .working)
+        #expect(near(v.bankSeconds, 15 * minute))
+    }
+
+    @Test mutating func aMeetingDoesNotStartTheTimerWhenNothingWasRunning() {
+        send(.meeting(true), at: mon(9))
+        send(.meeting(false), at: mon(10))
+        #expect(view(at: mon(10)).menuTitle == "Idle")
+    }
+
+    @Test mutating func goingBackToWorkDuringAMeetingIsRespected() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.meeting(true), at: mon(10))
+        send(.startWork(deliverableID: nil), at: mon(10, 10))
+        send(.meeting(true), at: mon(10, 11))
+        #expect(view(at: mon(10, 20)).mode == .working)
+        send(.meeting(false), at: mon(11))
+        #expect(view(at: mon(11)).elapsedSeconds == 50 * minute)
+    }
+
+    @Test mutating func aManualPauseIsNotEndedByAMeetingEnding() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.pause, at: mon(9, 30))
+        send(.meeting(true), at: mon(10))
+        send(.meeting(false), at: mon(11))
+        #expect(view(at: mon(11)).menuTitle == "Paused · 1h 30m")
+    }
+
+    @Test mutating func meetingsCanBeIgnored() {
+        send(.setMeetingPause(false), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.meeting(true), at: mon(9, 30))
+        #expect(view(at: mon(9, 40)).mode == .working)
+    }
+
+    @Test mutating func aMeetingPauseSurvivesSavingAndLoading() throws {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.meeting(true), at: mon(10))
+        state = try Persistence.decode(Persistence.encode(state))
+        send(.meeting(false), at: mon(11))
+        #expect(view(at: mon(11)).mode == .working)
+    }
+
     // MARK: Break bank and ratio (stories 13-24)
 
     @Test mutating func defaultRatioIsOneThird() {

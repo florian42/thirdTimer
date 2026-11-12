@@ -33,6 +33,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Third Timer checks whether you are in a meeting right now, so that it pauses and stays quiet until the meeting ends.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Third Timer checks whether you are in a meeting right now, so that it pauses and stays quiet until the meeting ends.</string>
 </dict>
 </plist>
 PLIST

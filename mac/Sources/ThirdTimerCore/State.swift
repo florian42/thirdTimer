@@ -129,6 +129,19 @@ public struct Settings: Codable, Equatable, Sendable {
     public var launchAtLogin: Bool = false
 }
 
+/// Meetings from the calendar: they pause the timer by themselves.
+public struct Meetings: Codable, Equatable, Sendable {
+    public var pauseEnabled = true
+    /// What the calendar last said.
+    public var inMeeting = false
+    /// The timer was paused by a meeting, so it starts again when the meeting ends.
+    public var pausedByMeeting = false
+    /// What was being worked on when the meeting began.
+    public var resumeDeliverableID: UUID?
+
+    public init() {}
+}
+
 /// What the user is doing right now. One case at a time, so a stint and a
 /// break can never exist together.
 public enum Session: Codable, Equatable, Sendable {
@@ -159,8 +172,14 @@ public struct EngineState: Codable, Equatable, Sendable {
     /// Set while the timer is paused, for a meeting or anything else that is
     /// neither work on a deliverable nor a break.
     public var pausedSince: Date?
+    public var savedMeetings: Meetings?
 
     public init() {}
+
+    public var meetings: Meetings {
+        get { savedMeetings ?? Meetings() }
+        set { savedMeetings = newValue }
+    }
 
     public var rhythm: Rhythm {
         get { savedRhythm ?? Rhythm() }
@@ -208,6 +227,9 @@ public enum Event: Equatable, Sendable {
     /// Stop counting, for a meeting or anything else that is neither work nor a break.
     /// The bank is kept, nothing is earned or spent, and nothing rings.
     case pause
+    /// The calendar says a meeting is running now, or that none is.
+    case meeting(Bool)
+    case setMeetingPause(Bool)
     case setRatio(denominator: Int)
     case addDeliverable(id: UUID, name: String)
     case renameDeliverable(id: UUID, name: String)

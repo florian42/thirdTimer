@@ -22,7 +22,13 @@ To start it at every login, open the panel, then Settings, then turn on
 
 ## Use
 
-- **Pause for a meeting** stops the timer for anything that is neither work on
+- **Meetings pause the timer by themselves.** The app reads the Mac's
+  calendars (macOS asks for permission once). While an event covers the
+  current time, the timer is paused and nothing rings or pops up; when it
+  ends, work starts again on the same deliverable. All-day entries, time
+  marked as free, and declined or cancelled invitations don't count. Turn it
+  off under Settings, "Pause during calendar meetings".
+- **Pause for a meeting** does the same by hand: it stops the timer for anything that is neither work on
   a deliverable nor a break. Nothing is earned or spent, banked break time is
   kept, and the bell stays quiet until you go back to work.
 - **Control-Option-T** toggles from anywhere: start working, take a break,
