@@ -1,0 +1,201 @@
+name: Mac app
+
+on:
+  push:
+    paths:
+      - "mac/**"
+      - ".github/workflows/mac-app.yml"
+  workflow_dispatch:
+    inputs:
+      commit_screenshots:
+        description: "Commit the screenshots from this run to mac/docs/screenshots"
+        type: boolean
+        default: false
+      walkthrough:
+        description: "Record the scripted walkthrough video and commit it to mac/docs"
+        type: boolean
+        default: false
+      screenshots_dir:
+        description: "Folder under mac/docs/screenshots to write them to"
+        type: string
+        default: "after"
+
+permissions:
+  contents: read
+
+jobs:
+  engine-tests-linux:
+    name: Engine tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.0-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the engine tests
+        working-directory: mac
+        run: swift test
+
+  mac-build:
+    name: Build and run on macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version && sw_vers
+
+      - name: Run the engine tests
+        working-directory: mac
+        run: swift test
+
+      - name: Build ThirdTimer.app
+        working-directory: mac
+        run: ./build-app.sh
+
+      - name: Check the app bundle
+        working-directory: mac
+        run: |
+          codesign --verify --verbose build/ThirdTimer.app
+          plutil -lint build/ThirdTimer.app/Contents/Info.plist
+          file build/ThirdTimer.app/Contents/MacOS/ThirdTimer
+
+      - name: Run the app mid-stint, then restart it
+        working-directory: mac
+        run: |
+          set -x
+          mkdir -p proof
+          export THIRDTIMER_STATE_FILE="$PWD/proof/state.json"
+          BIN=build/ThirdTimer.app/Contents/MacOS/ThirdTimer
+
+          # 1. Start with a seeded work stint and show the panel in a window.
+          "$BIN" --at 10:20 --demo working --window --print-title > proof/run1-working.log 2>&1 &
+          sleep 8
+          pgrep -x ThirdTimer
+          screencapture -x proof/1-working.png
+          ci/capture.sh working
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run1-working.log
+
+          # 2. Restart from the saved state file only: the stint must still be running.
+          "$BIN" --at 10:20 --window --print-title > proof/run2-restarted.log 2>&1 &
+          sleep 8
+          pgrep -x ThirdTimer
+          screencapture -x proof/2-restarted.png
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run2-restarted.log
+          grep -q "Quarterly report" proof/run2-restarted.log
+
+          # 3. A break in progress: the countdown must tick down.
+          "$BIN" --at 10:20 --demo breaking --window --print-title > proof/run3-breaking.log 2>&1 &
+          sleep 8
+          pgrep -x ThirdTimer
+          screencapture -x proof/3-breaking.png
+          ci/capture.sh breaking
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run3-breaking.log
+          grep -q "Break" proof/run3-breaking.log
+
+          # 3b. Other states, for screenshots: worst-case data, empty, a suggested
+          # pause, lunchtime, and a lunch break. The clock is set so that the
+          # result does not depend on when CI runs.
+          for demo in worst@10:20 idle@10:20 nudge@10:20 noon@12:05 lunch@12:05; do
+            kind="${demo%@*}"
+            "$BIN" --at "${demo#*@}" --demo "$kind" --window --print-title > "proof/run-$kind.log" 2>&1 &
+            sleep 8
+            pgrep -x ThirdTimer
+            screencapture -x "proof/full-$kind.png"
+            ci/capture.sh "$kind"
+            pkill -x ThirdTimer
+            sleep 1
+          done
+          # The suggested pause must have rung the bell once.
+          cat proof/run-nudge.log | head -5
+          test "$(grep -c "^BELL 1 " proof/run-nudge.log)" = "1"
+          test "$(grep -c "^BELL 1 " proof/run-noon.log)" = "1"
+
+          # 4. A break that runs out: the alarm must fire once and be recorded.
+          "$BIN" --at 10:20 --demo ending --print-title > proof/run4-alarm.log 2>&1 &
+          sleep 8
+          pkill -x ThirdTimer
+          sleep 1
+          cat proof/run4-alarm.log
+          test "$(grep -c "ALARM" proof/run4-alarm.log)" = "1"
+          grep -q "left" proof/run4-alarm.log
+          grep -q "past" proof/run4-alarm.log
+          grep '"alarmFired" : true' proof/state.json
+
+      - name: Record the walkthrough video
+        if: github.event_name == 'workflow_dispatch' && inputs.walkthrough
+        working-directory: mac
+        run: |
+          set -x
+          export THIRDTIMER_STATE_FILE="$PWD/proof/walkthrough-state.json"
+          screencapture -v -V 118 -x proof/walkthrough.mov &
+          sleep 2
+          build/ThirdTimer.app/Contents/MacOS/ThirdTimer --walkthrough > proof/walkthrough.log 2>&1 &
+          sleep 119
+          pkill -x ThirdTimer || true
+          wait || true
+          ls -la proof/walkthrough.mov
+
+      - name: Package the app
+        working-directory: mac
+        run: ditto -c -k --keepParent build/ThirdTimer.app proof/ThirdTimer.app.zip
+
+      - name: Upload the app and the proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thirdtimer-mac
+          path: mac/proof
+
+  screenshots:
+    name: Commit screenshots and video
+    needs: mac-build
+    if: github.event_name == 'workflow_dispatch' && (inputs.commit_screenshots || inputs.walkthrough)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: thirdtimer-mac
+          path: proof
+      - name: Commit the media
+        run: |
+          if [ "${{ inputs.commit_screenshots }}" = "true" ]; then
+            dir="mac/docs/screenshots/${{ inputs.screenshots_dir }}"
+            rm -rf "$dir" && mkdir -p "$dir"
+            cp proof/*-window.png proof/*-menubar.png proof/full-*.png proof/1-working.png "$dir/"
+          fi
+          if [ "${{ inputs.walkthrough }}" = "true" ]; then
+            # Compress before committing: the raw recording is about 14 MB.
+            sudo apt-get install -y -q ffmpeg >/dev/null
+            ffmpeg -v error -y -i proof/walkthrough.mov -t 112 -r 30 -c:v libx264 -crf 26 \
+              -pix_fmt yuv420p -movflags +faststart -an /tmp/walkthrough-silent.mp4
+            # The screen recording has no sound, so lay the bell over it at the
+            # moments the app rang it (the BELL lines in its log). The window
+            # appears about 1.8 s into the recording.
+            inputs=""; filters=""; labels=""; n=0
+            while read -r _ strikes at; do
+              for k in $(seq 1 "$strikes"); do
+                n=$((n + 1))
+                ms=$(awk -v t="$at" -v k="$k" 'BEGIN { printf "%d", (t + 1.8 + (k - 1) * 2.5) * 1000 }')
+                inputs="$inputs -i mac/Resources/bell.m4a"
+                filters="$filters[$n]adelay=$ms[a$n];"
+                labels="$labels[a$n]"
+              done
+            done < <(grep "^BELL " proof/walkthrough.log)
+            ffmpeg -v error -y -i /tmp/walkthrough-silent.mp4 $inputs \
+              -filter_complex "${filters}${labels}amix=inputs=$n:normalize=0,apad[a]" \
+              -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 128k -shortest \
+              -movflags +faststart mac/docs/walkthrough.mp4
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mac/docs
+          git commit -m "Add media of the Mac app from CI"
+          git push
