@@ -11,7 +11,6 @@ Tools (`xcode-select --install`).
 ```sh
 git clone https://github.com/florian42/thirdTimer.git
 cd thirdTimer
-git checkout claude/eloquent-gates-034sfi
 ./mac/install.sh
 ```
 
@@ -23,6 +22,9 @@ To start it at every login, open the panel, then Settings, then turn on
 
 ## Use
 
+- **Pause for a meeting** stops the timer for anything that is neither work on
+  a deliverable nor a break. Nothing is earned or spent, banked break time is
+  kept, and the bell stays quiet until you go back to work.
 - **Control-Option-T** toggles from anywhere: start working, take a break,
   resume work.
 - Click the menu bar item for the panel: what you're working on, partial

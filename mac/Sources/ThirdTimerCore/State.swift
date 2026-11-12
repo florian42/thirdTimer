@@ -156,6 +156,9 @@ public struct EngineState: Codable, Equatable, Sendable {
     /// Optional so that state saved before these existed still loads.
     public var savedRhythm: Rhythm?
     public var savedNudgeLog: NudgeLog?
+    /// Set while the timer is paused, for a meeting or anything else that is
+    /// neither work on a deliverable nor a break.
+    public var pausedSince: Date?
 
     public init() {}
 
@@ -202,6 +205,9 @@ public enum Event: Equatable, Sendable {
     case recordHandoff(String)
     case resumeWork(deliverableID: UUID?)
     case alarmFired
+    /// Stop counting, for a meeting or anything else that is neither work nor a break.
+    /// The bank is kept, nothing is earned or spent, and nothing rings.
+    case pause
     case setRatio(denominator: Int)
     case addDeliverable(id: UUID, name: String)
     case renameDeliverable(id: UUID, name: String)

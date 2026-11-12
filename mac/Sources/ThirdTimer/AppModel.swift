@@ -323,6 +323,9 @@ final class AppModel: ObservableObject {
             apply(.recordCheckpoint("Section 3 drafted, tables missing"), total - 3 * 60)
         case "lunch":
             apply(.startLunch, total - 5 * 60)
+        case "paused":
+            // In a meeting for the last 25 minutes.
+            apply(.pause, total - 25 * 60)
         default:
             // "working", "nudge" and "noon" differ only in the clock and the stint length.
             break

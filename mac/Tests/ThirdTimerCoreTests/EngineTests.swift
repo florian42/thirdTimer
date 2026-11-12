@@ -121,6 +121,78 @@ struct EngineTests {
         #expect(view(at: mon(10, 5)).todayBreakSeconds == 5 * minute)
     }
 
+    // MARK: Pausing for a meeting
+
+    @Test mutating func pausingWorkKeepsWhatWasEarnedAndStopsCounting() {
+        addReport()
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.pause, at: mon(10))
+        let v = view(at: mon(10, 45))
+        #expect(v.mode == .idle)
+        #expect(v.isPaused)
+        #expect(v.menuTitle == "Paused · 45m")
+        #expect(near(v.bankSeconds, 20 * minute))
+        #expect(v.todayWorkSeconds == hour)
+        #expect(v.todayBreakSeconds == 0)
+        #expect(v.activeDeliverables[0].investedSeconds == hour)
+        #expect(v.preselectedDeliverableID == report)
+    }
+
+    @Test mutating func nothingIsSuggestedWhilePaused() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.pause, at: mon(9, 50))
+        for minutes in stride(from: 0, through: 240, by: 5) {
+            let time = mon(9, 50).addingTimeInterval(Double(minutes) * minute)
+            send(.tick, at: time)
+            #expect(lastEffects.isEmpty)
+            #expect(view(at: time).suggestion == nil)
+        }
+    }
+
+    @Test mutating func pausingABreakCancelsTheAlarmAndSpendsOnlyTheTimeTaken() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        send(.pause, at: mon(10, 5))
+        #expect(lastEffects.contains(.cancelAlarm))
+        let v = view(at: mon(11))
+        #expect(v.isPaused)
+        #expect(near(v.bankSeconds, 15 * minute))
+        #expect(v.todayBreakSeconds == 5 * minute)
+    }
+
+    @Test mutating func workAfterAPauseStartsAFreshStint() {
+        addReport()
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.pause, at: mon(9, 50))
+        send(.startWork(deliverableID: report), at: mon(10, 30))
+        let v = view(at: mon(10, 40))
+        #expect(v.mode == .working)
+        #expect(!v.isPaused)
+        #expect(v.elapsedSeconds == 10 * minute)
+        #expect(v.suggestion == nil)
+        #expect(v.activeDeliverables[0].investedSeconds == hour)
+    }
+
+    @Test mutating func pausingWhenIdleDoesNothing() {
+        send(.pause, at: mon(9))
+        #expect(!view(at: mon(9)).isPaused)
+        #expect(lastEffects.isEmpty)
+    }
+
+    @Test mutating func resetClearsAPause() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.pause, at: mon(10))
+        send(.resetSession, at: mon(10, 5))
+        #expect(view(at: mon(10, 5)).menuTitle == "Idle")
+    }
+
+    @Test mutating func aPauseSurvivesSavingAndLoading() throws {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.pause, at: mon(10))
+        state = try Persistence.decode(Persistence.encode(state))
+        #expect(view(at: mon(10, 30)).menuTitle == "Paused · 30m")
+    }
+
     // MARK: Break bank and ratio (stories 13-24)
 
     @Test mutating func defaultRatioIsOneThird() {

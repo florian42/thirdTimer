@@ -100,7 +100,7 @@ jobs:
           # 3b. Other states, for screenshots: worst-case data, empty, a suggested
           # pause, lunchtime, and a lunch break. The clock is set so that the
           # result does not depend on when CI runs.
-          for demo in worst@10:20 idle@10:20 nudge@10:20 noon@12:05 lunch@12:05; do
+          for demo in worst@10:20 idle@10:20 nudge@10:20 noon@12:05 lunch@12:05 paused@12:05; do
             kind="${demo%@*}"
             "$BIN" --at "${demo#*@}" --demo "$kind" --window --print-title > "proof/run-$kind.log" 2>&1 &
             sleep 8
@@ -114,6 +114,9 @@ jobs:
           cat proof/run-nudge.log | head -5
           test "$(grep -c "^BELL 1 " proof/run-nudge.log)" = "1"
           test "$(grep -c "^BELL 1 " proof/run-noon.log)" = "1"
+          # Paused through lunchtime: nothing may ring.
+          head -5 proof/run-paused.log
+          test "$(grep -c "^BELL" proof/run-paused.log)" = "0"
 
           # 4. A break that runs out: the alarm must fire once and be recorded.
           "$BIN" --at 10:20 --demo ending --print-title > proof/run4-alarm.log 2>&1 &
