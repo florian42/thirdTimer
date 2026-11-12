@@ -30,6 +30,12 @@ final class AppModel: ObservableObject {
     /// Two players, so the second strike can start while the first still rings.
     private var bellPlayers: [AVAudioPlayer] = []
 
+    let meetings = MeetingWatcher()
+    private var secondsSinceCalendarCheck = 0
+    /// Demos and checks run on a made-up clock, so the real calendar is left alone.
+    private static let scripted = ["--demo", "--at", "--walkthrough", "--print-title"]
+        .contains { CommandLine.arguments.contains($0) }
+
     var snapshot: Snapshot { engine.snapshot(state, now: now) }
 
     private init() {
@@ -52,6 +58,7 @@ final class AppModel: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
         ticker = timer
         send(.launch)
+        if state.meetings.pauseEnabled { watchCalendar() }
     }
 
     private func currentTime() -> Date {
@@ -79,7 +86,22 @@ final class AppModel: ObservableObject {
         now = currentTime()
     }
 
+    /// Starts looking at the calendar. Called at launch and when the setting is turned on.
+    func watchCalendar() {
+        guard !AppModel.scripted, AppModel.canNotify, meetings.access == .unknown else { return }
+        meetings.requestAccess()
+    }
+
+    private func checkCalendar() {
+        guard !AppModel.scripted else { return }
+        secondsSinceCalendarCheck += 1
+        guard secondsSinceCalendarCheck >= 15 else { return }
+        secondsSinceCalendarCheck = 0
+        send(.meeting(state.meetings.pauseEnabled && meetings.inMeeting(at: Date())))
+    }
+
     private func tick() {
+        checkCalendar()
         send(.tick)
         deliverNudgeWhenQuiet()
         // `--print-title` writes the menu bar text once a second, for checks.
@@ -323,6 +345,12 @@ final class AppModel: ObservableObject {
             apply(.recordCheckpoint("Section 3 drafted, tables missing"), total - 3 * 60)
         case "lunch":
             apply(.startLunch, total - 5 * 60)
+        case "meeting":
+            // The calendar showed a meeting 25 minutes ago.
+            apply(.meeting(true), total - 25 * 60)
+        case "paused":
+            // In a meeting for the last 25 minutes.
+            apply(.pause, total - 25 * 60)
         default:
             // "working", "nudge" and "noon" differ only in the clock and the stint length.
             break

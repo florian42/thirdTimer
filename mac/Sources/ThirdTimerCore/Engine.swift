@@ -51,6 +51,8 @@ public struct Engine: Sendable {
 
         case .startWork(let deliverableID):
             guard s.mode == .idle else { return (state, []) }
+            s.pausedSince = nil
+            s.meetings.pausedByMeeting = false
             beginStint(&s, deliverableID: deliverableID, handoff: nil, now: now, effects: &effects)
 
         case .startBreak, .startLunch:
@@ -107,18 +109,40 @@ public struct Engine: Sendable {
 
         case .resumeWork(let deliverableID):
             guard s.mode == .breaking, let b = s.currentBreak else { return (state, []) }
-            let taken = max(0, now.timeIntervalSince(b.start))
-            // Debit card, not credit card: the bank never goes below zero.
-            // Lunch uses up what was banked, so the afternoon starts fresh.
-            s.bankSeconds = b.isMeal == true ? 0 : max(0, s.bankSeconds - taken)
-            s.breakLog.append(BreakEntry(start: b.start, end: now))
-            effects.append(.cancelAlarm)
+            endBreak(&s, b, now: now, effects: &effects)
             beginStint(&s, deliverableID: deliverableID, handoff: b.handoff, now: now, effects: &effects)
 
         case .alarmFired:
             guard s.mode == .breaking, var b = s.currentBreak, !b.alarmFired else { return (state, []) }
             b.alarmFired = true
             s.session = .breaking(b)
+
+        case .pause:
+            guard pauseSession(&s, now: now, effects: &effects) != nil else { return (state, []) }
+
+        case .meeting(let running):
+            var m = s.meetings
+            guard running != m.inMeeting else { return (state, []) }
+            m.inMeeting = running
+            if running {
+                if m.pauseEnabled, let deliverableID = pauseSession(&s, now: now, effects: &effects) {
+                    m.pausedByMeeting = true
+                    m.resumeDeliverableID = deliverableID
+                }
+                s.meetings = m
+            } else {
+                let resume = m.pausedByMeeting && s.mode == .idle && s.pausedSince != nil
+                m.pausedByMeeting = false
+                s.meetings = m
+                if resume {
+                    // Straight back to what was being worked on, without a click.
+                    s.pausedSince = nil
+                    beginStint(&s, deliverableID: m.resumeDeliverableID, handoff: nil, now: now, effects: &effects)
+                }
+            }
+
+        case .setMeetingPause(let on):
+            s.meetings.pauseEnabled = on
 
         case .setRatio(let denominator):
             guard Engine.allowedDenominators.contains(denominator), denominator != s.ratioDenominator else {
@@ -191,10 +215,45 @@ public struct Engine: Sendable {
             s.session = .idle
             s.bankSeconds = 0
             s.returnInfo = nil
+            s.pausedSince = nil
+            s.meetings.pausedByMeeting = false
         }
 
         if s != state { effects.append(.save) }
         return (s, effects)
+    }
+
+    /// Stops a stint or a break without starting anything else. Returns the
+    /// deliverable that was in use (nil inside for none), or nil when nothing was running.
+    private func pauseSession(_ s: inout EngineState, now: Date, effects: inout [Effect]) -> UUID?? {
+        let deliverableID: UUID?
+        switch s.session {
+        case .idle:
+            return nil
+        case .working(let stint):
+            // What the stint earned goes to the bank and waits there.
+            s.bankSeconds += accrued(stint, ratio: s.ratio, now: now)
+            s.workLog.append(WorkEntry(start: stint.start, end: now, deliverableID: stint.deliverableID))
+            deliverableID = stint.deliverableID
+        case .breaking(let b):
+            // Only the break time actually taken is spent.
+            endBreak(&s, b, now: now, effects: &effects)
+            deliverableID = b.deliverableID
+        }
+        s.session = .idle
+        s.returnInfo = nil
+        s.pausedSince = now
+        s.meetings.pausedByMeeting = false
+        return .some(deliverableID)
+    }
+
+    private func endBreak(_ s: inout EngineState, _ b: BreakSession, now: Date, effects: inout [Effect]) {
+        let taken = max(0, now.timeIntervalSince(b.start))
+        // Debit card, not credit card: the bank never goes below zero.
+        // Lunch uses up what was banked, so the afternoon starts fresh.
+        s.bankSeconds = b.isMeal == true ? 0 : max(0, s.bankSeconds - taken)
+        s.breakLog.append(BreakEntry(start: b.start, end: now))
+        effects.append(.cancelAlarm)
     }
 
     private func beginStint(
@@ -279,7 +338,7 @@ public struct Engine: Sendable {
 
         switch state.mode {
         case .idle:
-            break
+            if let since = state.pausedSince { elapsed = max(0, now.timeIntervalSince(since)) }
         case .working:
             if let stint = state.stint {
                 elapsed = max(0, now.timeIntervalSince(stint.start))
@@ -298,7 +357,11 @@ public struct Engine: Sendable {
         let title: String
         switch state.mode {
         case .idle:
-            title = "Idle"
+            if state.pausedSince == nil {
+                title = "Idle"
+            } else {
+                title = "\(state.meetings.pausedByMeeting ? "Meeting" : "Paused") · \(Format.short(elapsed))"
+            }
         case .working:
             title = "\(menuName(currentName)) · \(Format.short(elapsed))"
         case .breaking:
@@ -328,6 +391,8 @@ public struct Engine: Sendable {
 
         return Snapshot(
             mode: state.mode,
+            isPaused: state.pausedSince != nil,
+            pausedByMeeting: state.pausedSince != nil && state.meetings.pausedByMeeting,
             menuTitle: title,
             elapsedSeconds: elapsed,
             breakRemainingSeconds: remaining,
@@ -438,8 +503,12 @@ public struct DeliverableView: Equatable, Identifiable, Sendable {
 
 public struct Snapshot: Equatable, Sendable {
     public var mode: Mode
+    /// Idle because the timer was paused, for a meeting say, rather than never started.
+    public var isPaused: Bool
+    /// Paused because the calendar shows a meeting; work starts again when it ends.
+    public var pausedByMeeting: Bool
     public var menuTitle: String
-    /// Time in the current stint or break.
+    /// Time in the current stint, break or pause.
     public var elapsedSeconds: Double
     /// Only on a break. Negative once the break has run past its end.
     public var breakRemainingSeconds: Double?

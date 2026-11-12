@@ -25,7 +25,12 @@ struct Mood {
     static func of(_ snap: Snapshot) -> Mood {
         switch snap.mode {
         case .idle:
-            return Mood(tint: .secondary, symbol: "pause.circle", title: "Ready when you are")
+            if snap.pausedByMeeting {
+                return Mood(tint: .indigo, symbol: "person.2.fill", title: "In a meeting")
+            }
+            return snap.isPaused
+                ? Mood(tint: .indigo, symbol: "pause.circle.fill", title: "Paused")
+                : Mood(tint: .secondary, symbol: "pause.circle", title: "Ready when you are")
         case .working:
             switch snap.suggestion {
             case .lunch: return Mood(tint: .orange, symbol: "fork.knife", title: "Lunchtime")
@@ -118,7 +123,13 @@ struct PanelView: View {
     private func heroText(_ snap: Snapshot) -> some View {
         switch snap.mode {
         case .idle:
-            if snap.bankSeconds >= 60 {
+            if snap.isPaused {
+                clock(snap.elapsedSeconds)
+                let kept = snap.bankSeconds >= 60 ? " \(Format.short(snap.bankSeconds)) of break is kept." : ""
+                secondary(snap.pausedByMeeting
+                    ? "Paused by your calendar. Work starts again when the meeting ends.\(kept)"
+                    : "Nothing is counted and the bell stays quiet.\(kept)")
+            } else if snap.bankSeconds >= 60 {
                 secondary("\(Format.short(snap.bankSeconds)) of break banked")
             } else {
                 secondary("Work as long as you like. Every hour earns \(60 / snap.ratioDenominator) minutes of break.")
@@ -182,7 +193,7 @@ struct PanelView: View {
         switch snap.mode {
         case .idle:
             deliverablePicker(snap)
-            primaryButton("Start working") {
+            primaryButton(snap.isPaused ? "Back to work" : "Start working") {
                 model.send(.startWork(deliverableID: selectedDeliverable))
             }
 
@@ -199,6 +210,7 @@ struct PanelView: View {
                         startBreak { model.send(.startBreak(seconds: nil)) }
                     }
                     Spacer()
+                    pauseButton
                     notNowButton
                 }
             } else {
@@ -219,6 +231,7 @@ struct PanelView: View {
                         }
                     }
                     Spacer()
+                    pauseButton
                     if snap.suggestion == .pause {
                         notNowButton
                     }
@@ -234,6 +247,10 @@ struct PanelView: View {
             primaryButton("Resume work") {
                 model.send(.resumeWork(deliverableID: selectedDeliverable))
             }
+            HStack {
+                Spacer()
+                pauseButton
+            }
         }
     }
 
@@ -243,6 +260,15 @@ struct PanelView: View {
             return "Energy dips around now. A short walk lifts it more than the screen does."
         }
         return "Step away from the screen. Look out of the window, stretch, get some water."
+    }
+
+    /// For a meeting, or anything else that is neither work on a deliverable nor a break.
+    private var pauseButton: some View {
+        Button("Pause for a meeting") { model.send(.pause) }
+            .buttonStyle(.link)
+            .font(.callout)
+            .fixedSize()
+            .help("Stops the timer. Nothing is earned or spent, and the bell stays quiet.")
     }
 
     private var notNowButton: some View {

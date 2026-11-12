@@ -4,6 +4,7 @@ import ThirdTimerCore
 /// Settings: the rhythm of breaks, the bell, the hand-off prompt and start at login.
 struct SettingsSection: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var watcher = AppModel.shared.meetings
 
     /// Lunchtimes offered, in minutes after midnight: 11:00 to 14:30.
     private static let lunchTimes = Array(stride(from: 11 * 60, through: 14 * 60 + 30, by: 30))
@@ -109,6 +110,19 @@ struct SettingsSection: View {
                             .font(.caption).foregroundStyle(.secondary)
                             .padding(.leading, 20)
                     }
+                }
+
+                Toggle("Pause during calendar meetings", isOn: Binding(
+                    get: { model.state.meetings.pauseEnabled },
+                    set: { on in
+                        model.send(.setMeetingPause(on))
+                        if on { model.watchCalendar() }
+                    }
+                ))
+                if model.state.meetings.pauseEnabled, watcher.access == .denied {
+                    Text("Third Timer can't read your calendar. Allow it in System Settings › Privacy & Security › Calendars, then restart the app.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .padding(.leading, 20)
                 }
 
                 Toggle("Ring a soft bell", isOn: Binding(
