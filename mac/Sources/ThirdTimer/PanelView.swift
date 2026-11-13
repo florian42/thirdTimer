@@ -14,34 +14,83 @@ enum Space {
 
 private let cardRadius: CGFloat = 12
 
-/// How each state looks: one system colour and one symbol, used in the
-/// panel and the menu bar alike. The symbol and the words carry the state;
-/// the colour only supports them.
+/// How each state looks: one colour and one symbol, used in the panel and
+/// the menu bar alike. The symbol and the words carry the state; the colour
+/// only supports them.
 struct Mood {
+    /// The ring, the label and the glow behind the panel.
     var tint: Color
+    /// A deeper shade of the tint, dark enough for white text on the main button.
+    var ink: Color
     var symbol: String
     var title: String
+
+    private static func shade(_ r: Double, _ g: Double, _ b: Double) -> Color {
+        Color(red: r, green: g, blue: b)
+    }
 
     static func of(_ snap: Snapshot) -> Mood {
         switch snap.mode {
         case .idle:
             if snap.pausedByMeeting {
-                return Mood(tint: .indigo, symbol: "person.2.fill", title: "In a meeting")
+                return Mood(tint: .indigo, ink: shade(0.33, 0.31, 0.78), symbol: "person.2.fill", title: "In a meeting")
             }
             return snap.isPaused
-                ? Mood(tint: .indigo, symbol: "pause.circle.fill", title: "Paused")
-                : Mood(tint: .secondary, symbol: "pause.circle", title: "Ready when you are")
+                ? Mood(tint: .indigo, ink: shade(0.33, 0.31, 0.78), symbol: "pause.circle.fill", title: "Paused")
+                : Mood(tint: .blue, ink: shade(0.10, 0.42, 0.86), symbol: "pause.circle", title: "Ready when you are")
         case .working:
             switch snap.suggestion {
-            case .lunch: return Mood(tint: .orange, symbol: "fork.knife", title: "Lunchtime")
-            case .pause: return Mood(tint: .mint, symbol: "leaf.fill", title: "A good moment to pause")
-            case nil: return Mood(tint: .green, symbol: "timer", title: "Working")
+            case .lunch:
+                return Mood(tint: .orange, ink: shade(0.78, 0.40, 0.04), symbol: "fork.knife", title: "Lunchtime")
+            case .pause:
+                return Mood(tint: .mint, ink: shade(0.04, 0.52, 0.47), symbol: "leaf.fill", title: "A good moment to pause")
+            case nil:
+                return Mood(tint: .green, ink: shade(0.11, 0.53, 0.30), symbol: "timer", title: "Working")
             }
         case .breaking:
             return snap.isLunchBreak
-                ? Mood(tint: .orange, symbol: "fork.knife", title: "Lunch")
-                : Mood(tint: .teal, symbol: "cup.and.saucer.fill", title: "On a break")
+                ? Mood(tint: .orange, ink: shade(0.78, 0.40, 0.04), symbol: "fork.knife", title: "Lunch")
+                : Mood(tint: .teal, ink: shade(0.07, 0.47, 0.58), symbol: "cup.and.saucer.fill", title: "On a break")
         }
+    }
+}
+
+/// The one main action of each state: a solid pill across the panel.
+struct PillButtonStyle: ButtonStyle {
+    var fill: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(fill.opacity(configuration.isPressed ? 0.82 : 1), in: Capsule())
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .contentShape(Capsule())
+    }
+}
+
+/// Smaller choices next to the main action.
+struct ChipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout)
+            .padding(.horizontal, Space.m)
+            .padding(.vertical, 5)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.18 : 0.08), in: Capsule())
+            .contentShape(Capsule())
+    }
+}
+
+/// Things you may do but rarely need: plain words, no box.
+struct QuietButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .contentShape(Rectangle())
     }
 }
 
@@ -57,25 +106,46 @@ struct PanelView: View {
     @State private var editName = ""
     @State private var copiedID: UUID?
     @State private var confirmingReset = false
+    // `--settings` opens on the settings page, for screenshots.
+    @State private var showingSettings = CommandLine.arguments.contains("--settings")
 
     var body: some View {
         let snap = model.snapshot
+        let mood = Mood.of(snap)
         ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
+                header(mood)
                 if let problem = model.loadProblem {
                     Text(problem).font(.caption).foregroundStyle(.secondary)
                 }
-                hero(snap)
-                deliverablesSection(snap)
-                todaySection(snap)
-                SettingsSection()
-                footer(snap)
+                if confirmingReset {
+                    resetConfirmation(snap)
+                }
+                if showingSettings {
+                    SettingsSection()
+                } else {
+                    hero(snap, mood)
+                    todaySection(snap)
+                    deliverablesSection(snap, mood)
+                    Text("⌃⌥T starts, breaks and resumes")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                }
             }
             .padding(Space.l)
         }
         // A fixed size: a scroll view has no height of its own, so without
         // one the panel collapses to nothing.
-        .frame(width: 360, height: 560)
+        .frame(width: 360, height: 620)
+        // The colour of the state glows softly from the top, behind everything.
+        .background(alignment: .top) {
+            LinearGradient(
+                colors: [mood.tint.opacity(0.30), mood.tint.opacity(0.10), mood.tint.opacity(0)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 400)
+        }
         // Keep the picker on the deliverable in use, also when the hotkey changed it.
         .onChange(of: model.state.lastDeliverableID) { newValue in
             selectedDeliverable = newValue
@@ -87,99 +157,147 @@ struct PanelView: View {
         }
     }
 
+    // MARK: Header
+
+    private func header(_ mood: Mood) -> some View {
+        HStack(spacing: Space.m) {
+            if showingSettings {
+                Text("Settings").font(.callout.weight(.semibold))
+            } else {
+                Label(mood.title, systemImage: mood.symbol)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(mood.tint)
+            }
+            Spacer()
+            if showingSettings {
+                Button("Done") { showingSettings = false }
+                    .buttonStyle(ChipButtonStyle())
+            } else {
+                Button {
+                    showingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(QuietButtonStyle())
+                .help("Settings")
+                Menu {
+                    Button("Reset session…") { confirmingReset = true }
+                    Divider()
+                    Button("Quit Third Timer") { NSApp.terminate(nil) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Reset the session, or quit")
+            }
+        }
+    }
+
     // MARK: Hero
 
-    /// The top card: what is happening now, and the one thing to do next.
-    private func hero(_ snap: Snapshot) -> some View {
-        let mood = Mood.of(snap)
-        return VStack(alignment: .leading, spacing: Space.m) {
-            HStack(alignment: .top, spacing: Space.m) {
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    Label(mood.title, systemImage: mood.symbol)
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(mood.tint)
-                    heroText(snap)
-                }
-                Spacer(minLength: 0)
-                if let progress = ringProgress(snap) {
-                    ProgressRing(progress: progress, tint: mood.tint)
-                        .frame(width: 44, height: 44)
-                        .padding(.top, Space.xs)
-                }
+    /// The top of the panel: what is happening now, and the one thing to do next.
+    private func hero(_ snap: Snapshot, _ mood: Mood) -> some View {
+        VStack(spacing: Space.l) {
+            if snap.mode == .working {
+                Text(snap.currentDeliverableName ?? "No deliverable")
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
-            heroActions(snap)
+            ZStack {
+                TimeRing(progress: ringProgress(snap), tint: mood.tint)
+                ringCenter(snap, mood)
+                    .frame(width: 150)
+            }
+            .frame(width: 196, height: 196)
+            if let line = heroLine(snap) {
+                secondary(line).multilineTextAlignment(.center)
+            }
+            heroActions(snap, mood)
         }
-        .padding(Space.l)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
-                .fill(LinearGradient(
-                    colors: [mood.tint.opacity(0.18), mood.tint.opacity(0.06)],
-                    startPoint: .top, endPoint: .bottom))
-        )
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
-    private func heroText(_ snap: Snapshot) -> some View {
+    private func ringCenter(_ snap: Snapshot, _ mood: Mood) -> some View {
         switch snap.mode {
         case .idle:
             if snap.isPaused {
-                clock(snap.elapsedSeconds)
-                let kept = snap.bankSeconds >= 60 ? " \(Format.short(snap.bankSeconds)) of break is kept." : ""
-                secondary(snap.pausedByMeeting
-                    ? "Paused by your calendar. Work starts again when the meeting ends.\(kept)"
-                    : "Nothing is counted and the bell stays quiet.\(kept)")
-            } else if snap.bankSeconds >= 60 {
-                secondary("\(Format.short(snap.bankSeconds)) of break banked")
+                clockStack(snap.elapsedSeconds, caption: snap.pausedByMeeting ? "in a meeting" : "paused")
             } else {
-                secondary("Work as long as you like. Every hour earns \(60 / snap.ratioDenominator) minutes of break.")
+                Image(systemName: "play.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(mood.tint.opacity(0.55))
+                    .accessibilityHidden(true)
             }
         case .working:
-            Text(snap.currentDeliverableName ?? "No deliverable")
-                .font(.title3.weight(.semibold))
-                .lineLimit(2)
-            clock(snap.elapsedSeconds)
-            secondary(workingLine(snap))
+            clockStack(snap.elapsedSeconds, caption: "\(Format.short(snap.bankSeconds)) break earned")
         case .breaking:
             let remaining = snap.breakRemainingSeconds ?? 0
-            clock(abs(remaining))
-            secondary(breakLine(snap, remaining: remaining))
+            clockStack(abs(remaining), caption: remaining >= 0 ? "left" : "past the end")
         }
     }
 
-    private func workingLine(_ snap: Snapshot) -> String {
-        let earned = "\(Format.short(snap.bankSeconds)) of break earned"
-        switch snap.suggestion {
-        case .pause: return "You've been at it for \(Format.short(snap.elapsedSeconds)). \(earned)."
-        case .lunch: return "A proper lunch sets up the afternoon."
-        case nil: return earned
+    private func clockStack(_ seconds: Double, caption: String) -> some View {
+        VStack(spacing: 2) {
+            Text(Format.clock(seconds))
+                .font(.system(size: 42, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .tracking(-1)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text(caption)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
     }
 
-    private func breakLine(_ snap: Snapshot, remaining: Double) -> String {
-        if snap.isLunchBreak {
-            guard remaining >= 0 else { return "past the end of lunch" }
-            let end = model.now.addingTimeInterval(remaining)
-            return "Enjoy your lunch. The bell rings at \(end.formatted(date: .omitted, time: .shortened))."
-        }
-        guard remaining >= 0 else {
+    /// One calm sentence under the ring, only when there is something to say.
+    private func heroLine(_ snap: Snapshot) -> String? {
+        switch snap.mode {
+        case .idle:
+            let kept = snap.bankSeconds >= 60 ? " \(Format.short(snap.bankSeconds)) of break is kept." : ""
+            if snap.pausedByMeeting {
+                return "Paused by your calendar. Work starts again when the meeting ends.\(kept)"
+            }
+            if snap.isPaused {
+                return "Nothing is counted and the bell stays quiet.\(kept)"
+            }
             return snap.bankSeconds >= 60
-                ? "past the end of this break · \(Format.short(snap.bankSeconds)) still banked"
-                : "past the end of this break"
+                ? "\(Format.short(snap.bankSeconds)) of break banked"
+                : "Work as long as you like. Every hour earns \(60 / snap.ratioDenominator) minutes of break."
+        case .working:
+            switch snap.suggestion {
+            case .pause: return "You've been at it for \(Format.short(snap.elapsedSeconds))."
+            case .lunch: return "A proper lunch sets up the afternoon."
+            case nil: return nil
+            }
+        case .breaking:
+            let remaining = snap.breakRemainingSeconds ?? 0
+            if snap.isLunchBreak {
+                guard remaining >= 0 else { return nil }
+                let end = model.now.addingTimeInterval(remaining)
+                return "Enjoy your lunch. The bell rings at \(end.formatted(date: .omitted, time: .shortened))."
+            }
+            guard remaining >= 0 else {
+                return snap.bankSeconds >= 60 ? "\(Format.short(snap.bankSeconds)) still banked" : nil
+            }
+            let staysBanked = snap.bankSeconds - remaining
+            return staysBanked >= 60 ? "\(Format.short(staysBanked)) more stays banked" : nil
         }
-        let staysBanked = snap.bankSeconds - remaining
-        return staysBanked >= 60
-            ? "left of this break · \(Format.short(staysBanked)) more stays banked"
-            : "left of this break"
     }
 
     /// While working the ring fills toward the suggested pause; on a break it empties.
-    private func ringProgress(_ snap: Snapshot) -> Double? {
+    private func ringProgress(_ snap: Snapshot) -> Double {
         switch snap.mode {
         case .idle:
-            return nil
+            return 0
         case .working:
-            guard let pauseAfter = snap.pauseAfterSeconds, pauseAfter > 0 else { return nil }
+            guard let pauseAfter = snap.pauseAfterSeconds, pauseAfter > 0 else { return 0 }
             return min(1, snap.elapsedSeconds / pauseAfter)
         case .breaking:
             let remaining = max(0, snap.breakRemainingSeconds ?? 0)
@@ -189,11 +307,11 @@ struct PanelView: View {
     }
 
     @ViewBuilder
-    private func heroActions(_ snap: Snapshot) -> some View {
+    private func heroActions(_ snap: Snapshot, _ mood: Mood) -> some View {
         switch snap.mode {
         case .idle:
             deliverablePicker(snap)
-            primaryButton(snap.isPaused ? "Back to work" : "Start working") {
+            primaryButton(snap.isPaused ? "Back to work" : "Start working", mood) {
                 model.send(.startWork(deliverableID: selectedDeliverable))
             }
 
@@ -202,55 +320,47 @@ struct PanelView: View {
                 returnInfoBox(info)
             }
             if snap.suggestion == .lunch {
-                primaryButton("Take lunch · \(model.state.rhythm.lunchLengthMinutes) min") {
+                primaryButton("Take lunch · \(model.state.rhythm.lunchLengthMinutes) min", mood) {
                     startBreak { model.send(.startLunch) }
                 }
-                HStack(spacing: Space.s) {
-                    Button("Short break · \(Format.short(snap.bankSeconds))") {
-                        startBreak { model.send(.startBreak(seconds: nil)) }
-                    }
-                    Spacer()
-                    pauseButton
-                    notNowButton
-                }
-            } else {
-                primaryButton("Take a break · \(Format.short(snap.bankSeconds))") {
+                Button("Short break · \(Format.short(snap.bankSeconds))") {
                     startBreak { model.send(.startBreak(seconds: nil)) }
                 }
-                HStack(spacing: Space.s) {
-                    if !snap.partialBreakOptions.isEmpty {
-                        // "Not now" needs the room when a pause is suggested.
-                        if snap.suggestion == nil {
-                            secondary("Or just")
-                        }
+                .buttonStyle(ChipButtonStyle())
+            } else {
+                primaryButton("Take a break · \(Format.short(snap.bankSeconds))", mood) {
+                    startBreak { model.send(.startBreak(seconds: nil)) }
+                }
+                if !snap.partialBreakOptions.isEmpty {
+                    HStack(spacing: Space.s) {
                         ForEach(snap.partialBreakOptions, id: \.self) { seconds in
                             Button("\(Int(seconds / 60)) min") {
                                 startBreak { model.send(.startBreak(seconds: seconds)) }
                             }
-                            .fixedSize()
+                            .buttonStyle(ChipButtonStyle())
                         }
                     }
-                    Spacer()
-                    pauseButton
-                    if snap.suggestion == .pause {
-                        notNowButton
-                    }
+                }
+            }
+            HStack(spacing: Space.l) {
+                pauseButton
+                if snap.suggestion != nil {
+                    Button("Not now") { model.send(.dismissSuggestion) }
+                        .buttonStyle(QuietButtonStyle())
                 }
             }
 
         case .breaking:
             Label(breakTip(snap), systemImage: snap.movementSuggested ? "figure.walk" : "eye")
-            .font(.callout)
-            .foregroundStyle(.secondary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
             breakNotes(snap)
             deliverablePicker(snap)
-            primaryButton("Resume work") {
+            primaryButton("Resume work", mood) {
                 model.send(.resumeWork(deliverableID: selectedDeliverable))
             }
-            HStack {
-                Spacer()
-                pauseButton
-            }
+            pauseButton
         }
     }
 
@@ -264,32 +374,19 @@ struct PanelView: View {
 
     /// For a meeting, or anything else that is neither work on a deliverable nor a break.
     private var pauseButton: some View {
-        Button("Pause for a meeting") { model.send(.pause) }
-            .buttonStyle(.link)
-            .font(.callout)
-            .fixedSize()
-            .help("Stops the timer. Nothing is earned or spent, and the bell stays quiet.")
-    }
-
-    private var notNowButton: some View {
-        Button("Not now") { model.send(.dismissSuggestion) }
-            .buttonStyle(.link)
-            .font(.callout)
+        Button {
+            model.send(.pause)
+        } label: {
+            Label("Pause for a meeting", systemImage: "person.2")
+        }
+        .buttonStyle(QuietButtonStyle())
+        .help("Stops the timer. Nothing is earned or spent, and the bell stays quiet.")
     }
 
     private func startBreak(_ send: () -> Void) {
         checkpointText = ""
         handoffText = ""
         send()
-    }
-
-    private func clock(_ seconds: Double) -> some View {
-        Text(Format.clock(seconds))
-            .font(.system(size: 48, weight: .medium, design: .rounded))
-            .monospacedDigit()
-            .tracking(-1)
-            .lineLimit(1)
-            .minimumScaleFactor(0.6)
     }
 
     private func secondary(_ text: String) -> Text {
@@ -300,14 +397,17 @@ struct PanelView: View {
         Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
     }
 
-    /// The one main action of each state: solid, large and full width.
-    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .keyboardShortcut(.defaultAction)
+    private func primaryButton(_ title: String, _ mood: Mood, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(PillButtonStyle(fill: mood.ink))
+            .keyboardShortcut(.defaultAction)
+    }
+
+    /// A quiet surface that groups related things without a border.
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
     }
 
     // MARK: Notes
@@ -363,20 +463,21 @@ struct PanelView: View {
             Text(label).font(.caption).foregroundStyle(.secondary)
             Text(text).font(.callout).lineLimit(3)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func returnInfoBox(_ info: ReturnInfo) -> some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-            if let checkpoint = info.checkpoint {
-                savedNote(label: "Where you left off", text: checkpoint)
+        card {
+            VStack(alignment: .leading, spacing: Space.s) {
+                if let checkpoint = info.checkpoint {
+                    savedNote(label: "Where you left off", text: checkpoint)
+                }
+                if let handoff = info.handoff {
+                    savedNote(label: "Handed off", text: handoff)
+                }
             }
-            if let handoff = info.handoff {
-                savedNote(label: "Handed off", text: handoff)
-            }
+            .padding(Space.m)
         }
-        .padding(Space.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func deliverablePicker(_ snap: Snapshot) -> some View {
@@ -388,29 +489,71 @@ struct PanelView: View {
         }
     }
 
+    // MARK: Today
+
+    /// Three numbers for the day. The value leads; the label is small beneath it.
+    private func todaySection(_ snap: Snapshot) -> some View {
+        VStack(alignment: .leading, spacing: Space.s) {
+            sectionTitle("Today")
+            HStack(spacing: Space.s) {
+                stat(Format.short(snap.todayWorkSeconds), "worked")
+                stat(Format.short(snap.todayBreakSeconds), "on breaks")
+                stat(Format.short(snap.bankSeconds), "banked")
+            }
+        }
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        card {
+            VStack(spacing: 2) {
+                Text(value)
+                    .font(.title3.weight(.semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(label).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Space.m)
+            .padding(.horizontal, Space.xs)
+        }
+    }
+
     // MARK: Deliverables
 
-    private func deliverablesSection(_ snap: Snapshot) -> some View {
+    private func deliverablesSection(_ snap: Snapshot, _ mood: Mood) -> some View {
         VStack(alignment: .leading, spacing: Space.s) {
             sectionTitle("Deliverables")
+            card {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(snap.activeDeliverables) { d in
+                        Group {
+                            if editingID == d.id {
+                                editRow(d)
+                            } else {
+                                deliverableRow(d, inUse: snap.mode == .working && snap.currentDeliverableID == d.id, mood)
+                            }
+                        }
+                        .padding(Space.m)
+                        Divider().padding(.leading, Space.m)
+                    }
+                    HStack(spacing: Space.s) {
+                        Image(systemName: "plus")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        TextField("New deliverable", text: $newName)
+                            .textFieldStyle(.plain)
+                            .onSubmit(addDeliverable)
+                        if !newName.trimmingCharacters(in: .whitespaces).isEmpty {
+                            Button("Add", action: addDeliverable)
+                        }
+                    }
+                    .padding(Space.m)
+                }
+            }
             if snap.activeDeliverables.isEmpty {
                 secondary("Add what you're working on, and Third Timer keeps track of the time you put into it.")
             }
-            ForEach(snap.activeDeliverables) { d in
-                if editingID == d.id {
-                    editRow(d)
-                } else {
-                    deliverableRow(d)
-                }
-            }
-            HStack(spacing: Space.s) {
-                TextField("New deliverable", text: $newName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(addDeliverable)
-                Button("Add", action: addDeliverable)
-                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            .padding(.top, Space.xs)
             if !snap.doneDeliverables.isEmpty {
                 DisclosureGroup("Done (\(snap.doneDeliverables.count))") {
                     ForEach(snap.doneDeliverables) { d in
@@ -433,17 +576,22 @@ struct PanelView: View {
         newName = ""
     }
 
-    private func deliverableRow(_ d: DeliverableView) -> some View {
+    private func deliverableRow(_ d: DeliverableView, inUse: Bool, _ mood: Mood) -> some View {
         VStack(alignment: .leading, spacing: Space.s) {
-            HStack(alignment: .top, spacing: Space.s) {
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    Text(d.name).fontWeight(.medium).lineLimit(2)
-                    (Text(Format.short(d.investedSeconds)).fontWeight(.semibold)
-                        + Text(" invested").foregroundColor(.secondary))
-                        .font(.callout)
-                        .monospacedDigit()
-                }
-                Spacer(minLength: 0)
+            HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                // A dot marks the one being worked on right now.
+                Circle()
+                    .fill(inUse ? mood.tint : Color.primary.opacity(0.15))
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+                Text(d.name).fontWeight(.medium).lineLimit(2)
+                Spacer(minLength: Space.s)
+                Text(Format.short(d.investedSeconds))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .fixedSize()
+                    .help("Time invested")
                 // Row actions sit in a quiet menu: none of them is the main action of the panel.
                 Menu {
                     Button("Rename") {
@@ -478,11 +626,10 @@ struct PanelView: View {
                     .padding(.top, Space.xs)
                 }
                 .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.leading, Space.l)
             }
         }
-        .padding(Space.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
     }
 
     private func copyLog(_ id: UUID) {
@@ -506,26 +653,13 @@ struct PanelView: View {
                 Button("Cancel") { editingID = nil }
             }
         }
-        .padding(Space.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
     }
 
-    // MARK: Today and footer
+    // MARK: Reset
 
-    private func todaySection(_ snap: Snapshot) -> some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-            sectionTitle("Today")
-            Text("\(Format.short(snap.todayWorkSeconds)) worked · \(Format.short(snap.todayBreakSeconds)) on breaks")
-                .font(.callout)
-                .monospacedDigit()
-        }
-    }
-
-    @ViewBuilder
-    private func footer(_ snap: Snapshot) -> some View {
-        if confirmingReset {
-            // Reset throws away banked break time, so it asks first.
+    /// Reset throws away banked break time, so it asks first.
+    private func resetConfirmation(_ snap: Snapshot) -> some View {
+        card {
             VStack(alignment: .leading, spacing: Space.s) {
                 Text(snap.bankSeconds >= 60
                     ? "Stop the timer and clear \(Format.short(snap.bankSeconds)) of banked break time?"
@@ -541,32 +675,28 @@ struct PanelView: View {
                         .keyboardShortcut(.cancelAction)
                 }
             }
-        } else {
-            HStack(spacing: Space.m) {
-                Text("⌃⌥T starts, breaks and resumes").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Reset…") { confirmingReset = true }
-                Button("Quit") { NSApp.terminate(nil) }
-            }
-            .buttonStyle(.link)
-            .font(.callout)
+            .padding(Space.m)
         }
     }
 }
 
-/// A thin ring: it fills while you work toward a pause, and empties during a break.
-struct ProgressRing: View {
+/// The ring around the time: it fills while you work toward a pause, and
+/// empties during a break.
+struct TimeRing: View {
     var progress: Double
     var tint: Color
 
     var body: some View {
         ZStack {
-            Circle().stroke(tint.opacity(0.2), lineWidth: 5)
-            Circle()
-                .trim(from: 0, to: max(0.001, min(1, progress)))
-                .stroke(tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                .rotationEffect(.degrees(-90))
+            Circle().stroke(tint.opacity(0.18), lineWidth: 10)
+            if progress > 0 {
+                Circle()
+                    .trim(from: 0, to: min(1, progress))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
         }
+        .padding(5)
         .accessibilityHidden(true)
     }
 }

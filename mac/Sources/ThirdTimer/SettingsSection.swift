@@ -17,7 +17,7 @@ struct SettingsSection: View {
 
     var body: some View {
         let rhythm = model.state.rhythm
-        DisclosureGroup("Settings") {
+        Group {
             VStack(alignment: .leading, spacing: Space.m) {
                 VStack(alignment: .leading, spacing: Space.xs) {
                     Text("Break ratio")
@@ -140,10 +140,7 @@ struct SettingsSection: View {
             }
             .font(.callout)
             .foregroundStyle(.primary)
-            .padding(.top, Space.s)
         }
-        .font(.subheadline.weight(.semibold))
-        .foregroundStyle(.secondary)
     }
 
     private func change(_ edit: (inout Rhythm) -> Void) {
