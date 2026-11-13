@@ -23,7 +23,7 @@ final class HotKey {
         // The dispatcher target also receives hotkeys while the app is in the
         // background with no window, which is how a menu bar app spends its life.
         let installed = InstallEventHandler(
-            GetEventDispatcherTarget(),
+            GetApplicationEventTarget(),
             { _, _, _ in
                 Task { @MainActor in HotKey.action?() }
                 return noErr
@@ -35,7 +35,7 @@ final class HotKey {
             UInt32(kVK_ANSI_T),
             UInt32(controlKey | optionKey),
             id,
-            GetEventDispatcherTarget(),
+            GetApplicationEventTarget(),
             0,
             &hotKeyRef
         )
