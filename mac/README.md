@@ -28,7 +28,7 @@ To start it at every login, open the panel, then Settings, then turn on
   ends, work starts again on the same deliverable. All-day entries, time
   marked as free, and declined or cancelled invitations don't count. Turn it
   off under Settings, "Pause during calendar meetings".
-- **Pause for a meeting** does the same by hand: it stops the timer for anything that is neither work on
+- **Pause timer** does the same by hand: it stops the timer for anything that is neither work on
   a deliverable nor a break. Nothing is earned or spent, banked break time is
   kept, and the bell stays quiet until you go back to work.
 - **Control-Option-T** toggles from anywhere: start working, take a break,

@@ -121,6 +121,12 @@ jobs:
             pkill -x ThirdTimer
             sleep 1
           done
+          # The settings page, for a screenshot.
+          "$BIN" --at 10:20 --demo working --settings --window --print-title > proof/run-settings.log 2>&1 &
+          sleep 8
+          ci/capture.sh settings
+          pkill -x ThirdTimer
+          sleep 1
           # The suggested pause must have rung the bell once.
           cat proof/run-nudge.log | head -5
           test "$(grep -c "^BELL 1 " proof/run-nudge.log)" = "1"
