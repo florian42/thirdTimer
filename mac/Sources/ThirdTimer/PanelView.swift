@@ -21,6 +21,7 @@ struct Mood {
     /// The ring, the label and the glow behind the panel.
     var tint: Color
     /// A deeper shade of the tint, dark enough for white text on the main button.
+    /// The button itself is the system's.
     var ink: Color
     var symbol: String
     var title: String
@@ -52,45 +53,6 @@ struct Mood {
                 ? Mood(tint: .orange, ink: shade(0.78, 0.40, 0.04), symbol: "fork.knife", title: "Lunch")
                 : Mood(tint: .teal, ink: shade(0.07, 0.47, 0.58), symbol: "cup.and.saucer.fill", title: "On a break")
         }
-    }
-}
-
-/// The one main action of each state: a solid pill across the panel.
-struct PillButtonStyle: ButtonStyle {
-    var fill: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(fill.opacity(configuration.isPressed ? 0.82 : 1), in: Capsule())
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .contentShape(Capsule())
-    }
-}
-
-/// Smaller choices next to the main action.
-struct ChipButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout)
-            .padding(.horizontal, Space.m)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(configuration.isPressed ? 0.18 : 0.08), in: Capsule())
-            .contentShape(Capsule())
-    }
-}
-
-/// Things you may do but rarely need: plain words, no box.
-struct QuietButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .opacity(configuration.isPressed ? 0.6 : 1)
-            .contentShape(Rectangle())
     }
 }
 
@@ -141,10 +103,10 @@ struct PanelView: View {
         // The colour of the state glows softly from the top, behind everything.
         .background(alignment: .top) {
             LinearGradient(
-                colors: [mood.tint.opacity(0.30), mood.tint.opacity(0.10), mood.tint.opacity(0)],
+                colors: [mood.tint.opacity(0.16), mood.tint.opacity(0.05), mood.tint.opacity(0)],
                 startPoint: .top, endPoint: .bottom
             )
-            .frame(height: 400)
+            .frame(height: 320)
         }
         // Keep the picker on the deliverable in use, also when the hotkey changed it.
         .onChange(of: model.state.lastDeliverableID) { newValue in
@@ -171,14 +133,14 @@ struct PanelView: View {
             Spacer()
             if showingSettings {
                 Button("Done") { showingSettings = false }
-                    .buttonStyle(ChipButtonStyle())
+                    .buttonStyle(.bordered)
             } else {
                 Button {
                     showingSettings = true
                 } label: {
                     Image(systemName: "gearshape")
                 }
-                .buttonStyle(QuietButtonStyle())
+                .buttonStyle(.borderless)
                 .help("Settings")
                 Menu {
                     Button("Reset session…") { confirmingReset = true }
@@ -326,7 +288,7 @@ struct PanelView: View {
                 Button("Short break · \(Format.short(snap.bankSeconds))") {
                     startBreak { model.send(.startBreak(seconds: nil)) }
                 }
-                .buttonStyle(ChipButtonStyle())
+                .buttonStyle(.bordered)
             } else {
                 primaryButton("Take a break · \(Format.short(snap.bankSeconds))", mood) {
                     startBreak { model.send(.startBreak(seconds: nil)) }
@@ -337,7 +299,7 @@ struct PanelView: View {
                             Button("\(Int(seconds / 60)) min") {
                                 startBreak { model.send(.startBreak(seconds: seconds)) }
                             }
-                            .buttonStyle(ChipButtonStyle())
+                            .buttonStyle(.bordered)
                         }
                     }
                 }
@@ -346,7 +308,7 @@ struct PanelView: View {
                 pauseButton
                 if snap.suggestion != nil {
                     Button("Not now") { model.send(.dismissSuggestion) }
-                        .buttonStyle(QuietButtonStyle())
+                        .buttonStyle(.borderless)
                 }
             }
 
@@ -379,7 +341,7 @@ struct PanelView: View {
         } label: {
             Label("Pause for a meeting", systemImage: "person.2")
         }
-        .buttonStyle(QuietButtonStyle())
+        .buttonStyle(.borderless)
         .help("Stops the timer. Nothing is earned or spent, and the bell stays quiet.")
     }
 
@@ -398,9 +360,14 @@ struct PanelView: View {
     }
 
     private func primaryButton(_ title: String, _ mood: Mood, action: @escaping () -> Void) -> some View {
-        Button(title, action: action)
-            .buttonStyle(PillButtonStyle(fill: mood.ink))
-            .keyboardShortcut(.defaultAction)
+        // The system's own prominent button, in the colour of the state.
+        Button(action: action) {
+            Text(title).frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(mood.ink)
+        .keyboardShortcut(.defaultAction)
     }
 
     /// A quiet surface that groups related things without a border.
@@ -688,11 +655,11 @@ struct TimeRing: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(tint.opacity(0.18), lineWidth: 10)
+            Circle().stroke(tint.opacity(0.18), lineWidth: 8)
             if progress > 0 {
                 Circle()
                     .trim(from: 0, to: min(1, progress))
-                    .stroke(tint, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
         }
