@@ -334,15 +334,15 @@ struct PanelView: View {
         return "Step away from the screen. Look out of the window, stretch, get some water."
     }
 
-    /// For a meeting, or anything else that is neither work on a deliverable nor a break.
+    /// Stops everything: for a meeting, an errand, or any time that is neither work nor a break.
     private var pauseButton: some View {
         Button {
             model.send(.pause)
         } label: {
-            Label("Pause for a meeting", systemImage: "person.2")
+            Label("Pause timer", systemImage: "pause.fill")
         }
-        .buttonStyle(.borderless)
-        .help("Stops the timer. Nothing is earned or spent, and the bell stays quiet.")
+        .buttonStyle(.bordered)
+        .help("Stops everything. Nothing is counted, earned or spent, and the bell stays quiet.")
     }
 
     private func startBreak(_ send: () -> Void) {
