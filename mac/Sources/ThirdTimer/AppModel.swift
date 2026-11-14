@@ -32,6 +32,11 @@ final class AppModel: ObservableObject {
 
     let meetings = MeetingWatcher()
     private var secondsSinceCalendarCheck = 0
+    let presence = PresenceWatcher()
+    /// The last moment the app was seen running, to notice sleep and restarts.
+    private var lastAlive = Date()
+    private var secondsSinceAliveStamp = 0
+    private var microphoneLogged = false
     /// Demos and checks run on a made-up clock, so the real calendar is left alone.
     private static let scripted = ["--demo", "--at", "--walkthrough", "--print-title"]
         .contains { CommandLine.arguments.contains($0) }
@@ -57,6 +62,7 @@ final class AppModel: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         ticker = timer
+        noticeTimeNotRunning()
         send(.launch)
         if state.meetings.pauseEnabled { watchCalendar() }
     }
@@ -100,7 +106,55 @@ final class AppModel: ObservableObject {
         send(.meeting(state.meetings.pauseEnabled && meetings.inMeeting(at: Date())))
     }
 
+    // MARK: Away from the Mac
+
+    /// A gap this long between two looks at the clock means the Mac slept or the app was closed.
+    private static let absenceSeconds = 120.0
+
+    private var aliveURL: URL {
+        stateURL.deletingLastPathComponent().appendingPathComponent("alive")
+    }
+
+    private func stampAlive() {
+        guard !AppModel.scripted else { return }
+        try? String(Date().timeIntervalSince1970).write(to: aliveURL, atomically: true, encoding: .utf8)
+    }
+
+    /// At launch: if the app was closed or the Mac was off while something ran,
+    /// that time is neither work nor break.
+    private func noticeTimeNotRunning() {
+        guard !AppModel.scripted,
+              let text = try? String(contentsOf: aliveURL, encoding: .utf8),
+              let seconds = Double(text)
+        else { return }
+        let last = Date(timeIntervalSince1970: seconds)
+        if Date().timeIntervalSince(last) > AppModel.absenceSeconds {
+            send(.absence(since: last))
+        }
+    }
+
+    private func checkPresence() {
+        guard !AppModel.scripted else { return }
+        let real = Date()
+        if real.timeIntervalSince(lastAlive) > AppModel.absenceSeconds {
+            // The Mac slept: the app did not run in between.
+            send(.absence(since: lastAlive))
+        }
+        lastAlive = real
+        let wasAway = state.presence.away
+        send(.away(state.presence.pauseEnabled && presence.isAway(working: state.mode == .working)))
+        if wasAway != state.presence.away {
+            log.notice("\(self.state.presence.away ? "AWAY" : "BACK", privacy: .public) \(self.presence.report, privacy: .public)")
+        }
+        secondsSinceAliveStamp += 1
+        if secondsSinceAliveStamp >= 30 {
+            secondsSinceAliveStamp = 0
+            stampAlive()
+        }
+    }
+
     private func tick() {
+        checkPresence()
         checkCalendar()
         send(.tick)
         deliverNudgeWhenQuiet()
@@ -179,6 +233,8 @@ final class AppModel: ObservableObject {
     /// A suggestion lands better at a natural pause than in the middle of a thought.
     private static let quietSeconds = 15.0
     private static let longestNudgeWait = 600.0
+    /// During a call a suggestion waits this much longer, then comes anyway.
+    private static let longestCallWait = 2700.0
 
     private func deliverNudgeWhenQuiet() {
         guard let pending = pendingNudge else { return }
@@ -189,6 +245,15 @@ final class AppModel: ObservableObject {
         let anyInput = CGEventType(rawValue: ~0)!
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
         let scripted = CommandLine.arguments.contains("--walkthrough")
+        if !AppModel.scripted, state.presence.quietOnCalls, let user = presence.microphoneUser,
+           Date() < pending.latest.addingTimeInterval(AppModel.longestCallWait) {
+            if !microphoneLogged {
+                microphoneLogged = true
+                log.notice("QUIET microphone in use by \(user, privacy: .public)")
+            }
+            return
+        }
+        microphoneLogged = false
         guard scripted || idle >= AppModel.quietSeconds || Date() >= pending.latest else { return }
         pendingNudge = nil
         ring(strikes: 1)
@@ -249,7 +314,14 @@ final class AppModel: ObservableObject {
         alarmTimer?.invalidate()
         alarmTimer = nil
         alarmDate = nil
+        // After sleep this runs before the next tick, so look around first.
+        checkPresence()
         guard state.mode == .breaking else { return }
+        guard !state.presence.away else {
+            // Nobody is there to hear it.
+            send(.alarmFired)
+            return
+        }
         if CommandLine.arguments.contains("--print-title") {
             print("ALARM: break time is up")
             fflush(stdout)
@@ -296,6 +368,7 @@ final class AppModel: ObservableObject {
             try FileManager.default.createDirectory(
                 at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Persistence.encode(state).write(to: stateURL, options: .atomic)
+            stampAlive()
         } catch {
             log.error("Could not save state: \(error.localizedDescription, privacy: .public)")
         }
@@ -348,6 +421,9 @@ final class AppModel: ObservableObject {
         case "meeting":
             // The calendar showed a meeting 25 minutes ago.
             apply(.meeting(true), total - 25 * 60)
+        case "away":
+            // The screen was locked 25 minutes ago.
+            apply(.away(true), total - 25 * 60)
         case "paused":
             // In a meeting for the last 25 minutes.
             apply(.pause, total - 25 * 60)

@@ -36,6 +36,9 @@ struct Mood {
             if snap.pausedByMeeting {
                 return Mood(tint: .indigo, ink: shade(0.33, 0.31, 0.78), symbol: "person.2.fill", title: "In a meeting")
             }
+            if snap.pausedByAway {
+                return Mood(tint: .indigo, ink: shade(0.33, 0.31, 0.78), symbol: "moon.zzz.fill", title: "Away")
+            }
             return snap.isPaused
                 ? Mood(tint: .indigo, ink: shade(0.33, 0.31, 0.78), symbol: "pause.circle.fill", title: "Paused")
                 : Mood(tint: .blue, ink: shade(0.10, 0.42, 0.86), symbol: "pause.circle", title: "Ready when you are")
@@ -187,7 +190,7 @@ struct PanelView: View {
         switch snap.mode {
         case .idle:
             if snap.isPaused {
-                clockStack(snap.elapsedSeconds, caption: snap.pausedByMeeting ? "in a meeting" : "paused")
+                clockStack(snap.elapsedSeconds, caption: snap.pausedByMeeting ? "in a meeting" : snap.pausedByAway ? "away" : "paused")
             } else {
                 Image(systemName: "play.fill")
                     .font(.system(size: 44))
@@ -225,6 +228,9 @@ struct PanelView: View {
             let kept = snap.bankSeconds >= 60 ? " \(Format.short(snap.bankSeconds)) of break is kept." : ""
             if snap.pausedByMeeting {
                 return "Paused by your calendar. Work starts again when the meeting ends.\(kept)"
+            }
+            if snap.pausedByAway {
+                return "Paused while you were away. Work starts again when you are back.\(kept)"
             }
             if snap.isPaused {
                 return "Nothing is counted and the bell stays quiet.\(kept)"

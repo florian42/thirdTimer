@@ -142,6 +142,25 @@ public struct Meetings: Codable, Equatable, Sendable {
     public init() {}
 }
 
+/// Whether the user is at the Mac. Away means the screen is locked, the display
+/// is off, the Mac slept, the app was not running, or nothing was touched for a while.
+public struct Presence: Codable, Equatable, Sendable {
+    public var pauseEnabled = true
+    public var away = false
+    public var awaySince: Date?
+    /// Work was stopped by going away, so it starts again on the way back.
+    public var pausedByAway = false
+    /// What was being worked on when the user left.
+    public var resumeDeliverableID: UUID?
+    /// Hold suggestions back while the microphone is in use, as in a call.
+    public var quietOnCalls = true
+
+    public init() {}
+
+    /// A long enough absence around lunchtime counts as lunch.
+    public static let lunchAbsenceMinutes = 20
+}
+
 /// What the user is doing right now. One case at a time, so a stint and a
 /// break can never exist together.
 public enum Session: Codable, Equatable, Sendable {
@@ -173,8 +192,14 @@ public struct EngineState: Codable, Equatable, Sendable {
     /// neither work on a deliverable nor a break.
     public var pausedSince: Date?
     public var savedMeetings: Meetings?
+    public var savedPresence: Presence?
 
     public init() {}
+
+    public var presence: Presence {
+        get { savedPresence ?? Presence() }
+        set { savedPresence = newValue }
+    }
 
     public var meetings: Meetings {
         get { savedMeetings ?? Meetings() }
@@ -230,6 +255,12 @@ public enum Event: Equatable, Sendable {
     /// The calendar says a meeting is running now, or that none is.
     case meeting(Bool)
     case setMeetingPause(Bool)
+    /// The user has left the Mac (locked it, say), or is back.
+    case away(Bool)
+    /// Nothing ran between `since` and now: the Mac slept or the app was closed.
+    case absence(since: Date)
+    case setAwayPause(Bool)
+    case setQuietOnCalls(Bool)
     case setRatio(denominator: Int)
     case addDeliverable(id: UUID, name: String)
     case renameDeliverable(id: UUID, name: String)

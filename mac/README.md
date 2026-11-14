@@ -28,6 +28,19 @@ To start it at every login, open the panel, then Settings, then turn on
   ends, work starts again on the same deliverable. All-day entries, time
   marked as free, and declined or cancelled invitations don't count. Turn it
   off under Settings, "Pause during calendar meetings".
+- **Away from the Mac, nothing counts.** When the screen is locked, the
+  display is off, the Mac sleeps, the app is closed, or nothing was typed or
+  moved for 10 minutes of work (a film or video call doesn't count as
+  nothing), work is paused and nothing rings. Back at the Mac, work starts
+  again on the same deliverable, except on a new day. A break goes on while
+  you are away; if it is over when you come back, work starts without a bell.
+  Twenty minutes away around lunchtime counts as lunch. Turn it off under
+  Settings, "Pause while I'm away from the Mac".
+- **Calls hold suggestions back.** While a program records from the
+  microphone (macOS 14 or later), the suggestion to pause waits, for 45
+  minutes at most. The bell at the end of a break still rings.
+- Suggestions only ever come while work is running: never when idle,
+  paused or on a break.
 - **Pause timer** does the same by hand: it stops the timer for anything that is neither work on
   a deliverable nor a break. Nothing is earned or spent, banked break time is
   kept, and the bell stays quiet until you go back to work.

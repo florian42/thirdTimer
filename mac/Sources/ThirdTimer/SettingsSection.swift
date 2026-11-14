@@ -125,6 +125,20 @@ struct SettingsSection: View {
                         .padding(.leading, 20)
                 }
 
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Toggle("Pause while I'm away from the Mac", isOn: Binding(
+                        get: { model.state.presence.pauseEnabled },
+                        set: { model.send(.setAwayPause($0)) }
+                    ))
+                    Text("Away means: screen locked, display off, Mac asleep, or no input for 10 min while working. Work starts again when you are back.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .padding(.leading, 20)
+                }
+                Toggle("Hold suggestions during calls", isOn: Binding(
+                    get: { model.state.presence.quietOnCalls },
+                    set: { model.send(.setQuietOnCalls($0)) }
+                ))
+
                 Toggle("Ring a soft bell", isOn: Binding(
                     get: { model.state.rhythm.bellEnabled },
                     set: { value in change { $0.bellEnabled = value } }

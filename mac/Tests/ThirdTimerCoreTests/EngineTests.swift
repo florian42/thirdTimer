@@ -273,6 +273,176 @@ struct EngineTests {
         #expect(view(at: mon(11)).mode == .working)
     }
 
+    // MARK: Away from the Mac
+
+    @Test mutating func lockingTheMacStopsWorkAndComingBackStartsItAgain() {
+        addReport()
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.away(true), at: mon(10))
+        let during = view(at: mon(10, 30))
+        #expect(during.pausedByAway)
+        #expect(during.menuTitle == "Away · 30m")
+        #expect(near(during.bankSeconds, 20 * minute))
+        send(.away(false), at: mon(10, 45))
+        let after = view(at: mon(11))
+        #expect(after.mode == .working)
+        #expect(after.currentDeliverableID == report)
+        #expect(after.elapsedSeconds == 15 * minute)
+        #expect(after.todayWorkSeconds == 75 * minute)
+    }
+
+    @Test mutating func nothingIsSuggestedWhileAway() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.away(true), at: mon(9, 55))
+        for minutes in stride(from: 0, through: 240, by: 5) {
+            send(.tick, at: mon(9, 55).addingTimeInterval(Double(minutes) * minute))
+            #expect(lastEffects.isEmpty)
+        }
+    }
+
+    @Test mutating func nothingIsSuggestedWhenNoWorkIsRunning() {
+        for minutes in stride(from: 0, through: 600, by: 5) {
+            send(.tick, at: mon(8).addingTimeInterval(Double(minutes) * minute))
+            #expect(lastEffects.isEmpty)
+        }
+    }
+
+    @Test mutating func goingAwayWhenNothingRunsStartsNothingOnTheWayBack() {
+        send(.away(true), at: mon(9))
+        send(.away(false), at: mon(10))
+        #expect(view(at: mon(10)).menuTitle == "Idle")
+    }
+
+    @Test mutating func aBreakGoesOnWhileAway() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        send(.away(true), at: mon(10, 2))
+        send(.away(false), at: mon(10, 10))
+        let v = view(at: mon(10, 10))
+        #expect(v.mode == .breaking)
+        #expect(v.breakRemainingSeconds == 10 * minute)
+    }
+
+    @Test mutating func comingBackAfterTheBreakEndedGoesStraightToWork() {
+        addReport()
+        send(.startWork(deliverableID: report), at: mon(9))
+        send(.startBreak(seconds: nil), at: mon(10))
+        send(.recordHandoff("Claude: check the figures"), at: mon(10, 1))
+        send(.away(true), at: mon(10, 2))
+        send(.away(false), at: mon(10, 30))
+        #expect(lastEffects.contains(.cancelAlarm))
+        let v = view(at: mon(10, 40))
+        #expect(v.mode == .working)
+        #expect(v.currentDeliverableID == report)
+        #expect(v.elapsedSeconds == 10 * minute)
+        #expect(v.returnInfo?.handoff == "Claude: check the figures")
+        // The bank never goes below zero, however long the break ran.
+        #expect(near(v.bankSeconds, 10 * minute / 3))
+    }
+
+    @Test mutating func aManualPauseIsNotEndedByComingBack() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.pause, at: mon(9, 30))
+        send(.away(true), at: mon(10))
+        send(.away(false), at: mon(11))
+        #expect(view(at: mon(11)).menuTitle == "Paused · 1h 30m")
+    }
+
+    @Test mutating func aNewDayDoesNotStartByItself() {
+        send(.startWork(deliverableID: nil), at: mon(16))
+        send(.away(true), at: mon(18))
+        send(.away(false), at: mon(8, day: 10))
+        let v = view(at: mon(8, day: 10))
+        #expect(v.menuTitle == "Idle")
+        #expect(near(v.bankSeconds, 40 * minute))
+    }
+
+    @Test mutating func aBreakLeftOvernightIsOverInTheMorning() {
+        send(.startWork(deliverableID: nil), at: mon(16))
+        send(.startBreak(seconds: nil), at: mon(17))
+        send(.away(true), at: mon(17, 5))
+        send(.away(false), at: mon(8, day: 10))
+        let v = view(at: mon(8, day: 10))
+        #expect(v.menuTitle == "Idle")
+        #expect(v.todayBreakSeconds == 0)
+    }
+
+    @Test mutating func backDuringAMeetingWaitsForTheMeetingToEnd() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.away(true), at: mon(9, 50))
+        send(.meeting(true), at: mon(10))
+        send(.away(false), at: mon(10, 5))
+        #expect(view(at: mon(10, 30)).menuTitle == "Meeting · 40m")
+        send(.meeting(false), at: mon(11))
+        #expect(view(at: mon(11, 10)).elapsedSeconds == 10 * minute)
+    }
+
+    @Test mutating func aMeetingThatEndsWhileAwayWaitsForTheWayBack() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.meeting(true), at: mon(10))
+        send(.away(true), at: mon(10, 30))
+        send(.meeting(false), at: mon(11))
+        #expect(view(at: mon(11, 5)).mode == .idle)
+        send(.away(false), at: mon(11, 20))
+        #expect(view(at: mon(11, 30)).elapsedSeconds == 10 * minute)
+    }
+
+    @Test mutating func startingWorkByHandWhileAwayIsRespected() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.away(true), at: mon(10))
+        send(.startWork(deliverableID: nil), at: mon(10, 10))
+        send(.away(false), at: mon(10, 20))
+        #expect(view(at: mon(10, 30)).elapsedSeconds == 20 * minute)
+    }
+
+    @Test mutating func beingAwayOverLunchtimeCountsAsLunch() {
+        send(.startWork(deliverableID: nil), at: mon(11))
+        send(.away(true), at: mon(12, 10))
+        send(.away(false), at: mon(13))
+        send(.tick, at: mon(13, 1))
+        #expect(!lastEffects.contains(.nudge(.lunch)))
+        #expect(view(at: mon(13, 1)).suggestion == nil)
+    }
+
+    @Test mutating func aShortAbsenceAtLunchtimeIsNotLunch() {
+        send(.startWork(deliverableID: nil), at: mon(11, 40))
+        send(.away(true), at: mon(11, 55))
+        send(.away(false), at: mon(12, 5))
+        send(.tick, at: mon(12, 6))
+        #expect(lastEffects.contains(.nudge(.lunch)))
+    }
+
+    @Test mutating func timeTheAppWasNotRunningIsNotWork() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        // The Mac slept, or the app was closed, from 10:00 to 10:40.
+        send(.absence(since: mon(10)), at: mon(10, 40))
+        let v = view(at: mon(11))
+        #expect(v.mode == .working)
+        #expect(v.elapsedSeconds == 20 * minute)
+        #expect(v.todayWorkSeconds == 80 * minute)
+    }
+
+    @Test mutating func anAbsenceNeverReachesBackBeforeTheStint() {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.absence(since: mon(8, 59)), at: mon(9, 30))
+        #expect(view(at: mon(9, 40)).todayWorkSeconds == 10 * minute)
+    }
+
+    @Test mutating func pausingWhileAwayCanBeTurnedOff() {
+        send(.setAwayPause(false), at: mon(8))
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.absence(since: mon(10)), at: mon(10, 40))
+        #expect(view(at: mon(11)).elapsedSeconds == 2 * hour)
+    }
+
+    @Test mutating func beingAwaySurvivesSavingAndLoading() throws {
+        send(.startWork(deliverableID: nil), at: mon(9))
+        send(.away(true), at: mon(10))
+        state = try Persistence.decode(Persistence.encode(state))
+        send(.away(false), at: mon(11))
+        #expect(view(at: mon(11)).mode == .working)
+    }
+
     // MARK: Break bank and ratio (stories 13-24)
 
     @Test mutating func defaultRatioIsOneThird() {

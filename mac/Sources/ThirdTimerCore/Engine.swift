@@ -53,6 +53,7 @@ public struct Engine: Sendable {
             guard s.mode == .idle else { return (state, []) }
             s.pausedSince = nil
             s.meetings.pausedByMeeting = false
+            s.presence.pausedByAway = false
             beginStint(&s, deliverableID: deliverableID, handoff: nil, now: now, effects: &effects)
 
         case .startBreak, .startLunch:
@@ -131,15 +132,43 @@ public struct Engine: Sendable {
                 }
                 s.meetings = m
             } else {
-                let resume = m.pausedByMeeting && s.mode == .idle && s.pausedSince != nil
-                m.pausedByMeeting = false
                 s.meetings = m
-                if resume {
-                    // Straight back to what was being worked on, without a click.
-                    s.pausedSince = nil
-                    beginStint(&s, deliverableID: m.resumeDeliverableID, handoff: nil, now: now, effects: &effects)
-                }
+                resumeIfFree(&s, sameDay: true, now: now, effects: &effects)
             }
+
+        case .away(let on):
+            var p = s.presence
+            guard on != p.away else { return (state, []) }
+            p.away = on
+            if on {
+                p.awaySince = now
+                s.presence = p
+                // A break goes on while away: being away is what a break is for.
+                if case .working = s.session,
+                   let deliverableID = pauseSession(&s, now: now, effects: &effects) {
+                    s.presence.pausedByAway = true
+                    s.presence.resumeDeliverableID = deliverableID
+                }
+            } else {
+                s.presence = p
+                comeBack(&s, since: p.awaySince ?? now, now: now, effects: &effects)
+            }
+
+        case .absence(let since):
+            guard s.presence.pauseEnabled, !s.presence.away, since < now else { return (state, []) }
+            // Never earlier than the start of what is running.
+            var left = since
+            if let stint = s.stint { left = max(left, stint.start) }
+            if let b = s.currentBreak { left = max(left, b.start) }
+            let (gone, first) = reduce(s, .away(true), now: left)
+            let (back, second) = reduce(gone, .away(false), now: now)
+            return (back, first + second)
+
+        case .setAwayPause(let on):
+            s.presence.pauseEnabled = on
+
+        case .setQuietOnCalls(let on):
+            s.presence.quietOnCalls = on
 
         case .setMeetingPause(let on):
             s.meetings.pauseEnabled = on
@@ -217,6 +246,7 @@ public struct Engine: Sendable {
             s.returnInfo = nil
             s.pausedSince = nil
             s.meetings.pausedByMeeting = false
+            s.presence.pausedByAway = false
         }
 
         if s != state { effects.append(.save) }
@@ -244,7 +274,62 @@ public struct Engine: Sendable {
         s.returnInfo = nil
         s.pausedSince = now
         s.meetings.pausedByMeeting = false
+        s.presence.pausedByAway = false
         return .some(deliverableID)
+    }
+
+    /// Work that a meeting or an absence stopped starts again once neither holds it.
+    /// After a night away it stays stopped: a new day starts by hand.
+    private func resumeIfFree(_ s: inout EngineState, sameDay: Bool, now: Date, effects: inout [Effect]) {
+        let m = s.meetings, p = s.presence
+        guard m.pausedByMeeting || p.pausedByAway else { return }
+        guard s.mode == .idle, s.pausedSince != nil else {
+            s.meetings.pausedByMeeting = false
+            s.presence.pausedByAway = false
+            return
+        }
+        guard !(m.pauseEnabled && m.inMeeting), !p.away else { return }
+        let deliverableID = p.pausedByAway ? p.resumeDeliverableID : m.resumeDeliverableID
+        s.meetings.pausedByMeeting = false
+        s.presence.pausedByAway = false
+        s.pausedSince = nil
+        if sameDay {
+            // Straight back to what was being worked on, without a click.
+            beginStint(&s, deliverableID: deliverableID, handoff: nil, now: now, effects: &effects)
+        }
+    }
+
+    /// The user is back at the Mac after being away since `since`.
+    private func comeBack(_ s: inout EngineState, since: Date, now: Date, effects: inout [Effect]) {
+        let sameDay = calendar.isDate(since, inSameDayAs: now)
+        creditLunch(&s, from: since, to: now)
+        guard case .breaking(let b) = s.session else {
+            resumeIfFree(&s, sameDay: sameDay, now: now, effects: &effects)
+            return
+        }
+        let end = b.start.addingTimeInterval(b.allowanceSeconds)
+        guard now >= end else { return }
+        if sameDay {
+            // The break is over and you are back: work goes on where it stopped.
+            endBreak(&s, b, now: now, effects: &effects)
+            beginStint(&s, deliverableID: b.deliverableID, handoff: b.handoff, now: now, effects: &effects)
+        } else {
+            endBreak(&s, b, now: end, effects: &effects)
+            s.session = .idle
+            s.returnInfo = nil
+        }
+    }
+
+    /// Being away for a while around lunchtime counts as lunch, so lunch is not
+    /// suggested right after coming back from it.
+    private func creditLunch(_ s: inout EngineState, from: Date, to: Date) {
+        let day = calendar.startOfDay(for: to)
+        let start = day.addingTimeInterval(Double(s.rhythm.lunchMinuteOfDay) * 60)
+        let end = start.addingTimeInterval(Double(Rhythm.lunchWindowMinutes) * 60)
+        guard overlap(from, to, start, end) >= Double(Presence.lunchAbsenceMinutes) * 60 else { return }
+        var log = s.nudgeLog
+        log.lunchTakenOn = day
+        s.nudgeLog = log
     }
 
     private func endBreak(_ s: inout EngineState, _ b: BreakSession, now: Date, effects: inout [Effect]) {
@@ -360,7 +445,10 @@ public struct Engine: Sendable {
             if state.pausedSince == nil {
                 title = "Idle"
             } else {
-                title = "\(state.meetings.pausedByMeeting ? "Meeting" : "Paused") · \(Format.short(elapsed))"
+                let held = state.meetings.pausedByMeeting || state.presence.pausedByAway
+                let inMeeting = state.meetings.pauseEnabled && state.meetings.inMeeting
+                let word = !held ? "Paused" : inMeeting ? "Meeting" : "Away"
+                title = "\(word) · \(Format.short(elapsed))"
             }
         case .working:
             title = "\(menuName(currentName)) · \(Format.short(elapsed))"
@@ -392,7 +480,10 @@ public struct Engine: Sendable {
         return Snapshot(
             mode: state.mode,
             isPaused: state.pausedSince != nil,
-            pausedByMeeting: state.pausedSince != nil && state.meetings.pausedByMeeting,
+            pausedByMeeting: state.pausedSince != nil && state.meetings.pauseEnabled && state.meetings.inMeeting
+                && (state.meetings.pausedByMeeting || state.presence.pausedByAway),
+            pausedByAway: state.pausedSince != nil && state.presence.pausedByAway
+                && !(state.meetings.pauseEnabled && state.meetings.inMeeting),
             menuTitle: title,
             elapsedSeconds: elapsed,
             breakRemainingSeconds: remaining,
@@ -507,6 +598,8 @@ public struct Snapshot: Equatable, Sendable {
     public var isPaused: Bool
     /// Paused because the calendar shows a meeting; work starts again when it ends.
     public var pausedByMeeting: Bool
+    /// Paused because the user left the Mac; work starts again when they are back.
+    public var pausedByAway: Bool
     public var menuTitle: String
     /// Time in the current stint, break or pause.
     public var elapsedSeconds: Double

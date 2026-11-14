@@ -107,11 +107,15 @@ jobs:
           cat proof/run-hotkey.log
           grep -q "^HOTKEY handler 0 register 0" proof/run-hotkey.log
           grep -q "^Working" proof/run-hotkey.log
+          # Reading the lock, the display and the microphone must work, and say
+          # that this unlocked, silent machine is in use.
+          grep "^PRESENCE" proof/run-hotkey.log
+          grep -q "^PRESENCE locked false displayAsleep false .* microphone free" proof/run-hotkey.log
 
           # 3b. Other states, for screenshots: worst-case data, empty, a suggested
           # pause, lunchtime, and a lunch break. The clock is set so that the
           # result does not depend on when CI runs.
-          for demo in worst@10:20 idle@10:20 nudge@10:20 noon@12:05 lunch@12:05 paused@12:05 meeting@12:05; do
+          for demo in worst@10:20 idle@10:20 nudge@10:20 noon@12:05 lunch@12:05 paused@12:05 meeting@12:05 away@12:05; do
             kind="${demo%@*}"
             "$BIN" --at "${demo#*@}" --demo "$kind" --window --print-title > "proof/run-$kind.log" 2>&1 &
             sleep 8
@@ -134,6 +138,9 @@ jobs:
           # Paused through lunchtime: nothing may ring.
           head -5 proof/run-paused.log
           test "$(grep -c "^BELL" proof/run-paused.log)" = "0"
+          # Away with the screen locked: nothing may ring either.
+          grep -q "^Away" proof/run-away.log
+          test "$(grep -c "^BELL" proof/run-away.log)" = "0"
 
           # 4. A break that runs out: the alarm must fire once and be recorded.
           "$BIN" --at 10:20 --demo ending --print-title > proof/run4-alarm.log 2>&1 &

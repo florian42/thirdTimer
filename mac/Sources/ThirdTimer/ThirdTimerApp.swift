@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             .notice("\(self.hotKey?.status ?? "", privacy: .public)")
         if CommandLine.arguments.contains("--print-title") {
             print(hotKey?.status ?? "")
+            print(AppModel.shared.presence.report)
             fflush(stdout)
         }
 
